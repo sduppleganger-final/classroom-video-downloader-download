@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareMacYtDlp } from "./prepare-mac-ytdlp.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
@@ -23,6 +24,8 @@ if (!existsSync(builder)) {
   console.error("electron-builder was not found. Run npm install first.");
   process.exit(1);
 }
+
+await prepareMacYtDlp({ projectRoot });
 
 mkdirSync(buildRoot, { recursive: true });
 

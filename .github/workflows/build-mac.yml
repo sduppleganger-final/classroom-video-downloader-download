@@ -42,6 +42,11 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Prepare current native Mac extractor
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run prepare:mac-ytdlp
+
       - name: Inspect bundled media helper binaries
         run: |
           node - <<'NODE'
@@ -68,9 +73,22 @@ jobs:
           EXTRACTOR_PATH="$(find "$SMOKE_DIR" -type f -path '*/app.asar.unpacked/node_modules/yt-dlp-static/bin/mac/yt-dlp' -print -quit)"
           test -n "$EXTRACTOR_PATH"
           file "$EXTRACTOR_PATH"
-          "$EXTRACTOR_PATH" --version
+          EXTRACTOR_VERSION="$("$EXTRACTOR_PATH" --version)"
+          echo "yt-dlp version: $EXTRACTOR_VERSION"
+          test "$EXTRACTOR_VERSION" = "2026.07.04"
           if [ -n "$SMOKE_TEST_URL" ]; then
-            "$EXTRACTOR_PATH" --no-playlist --no-warnings --skip-download --print '%(id)s|%(title)s' "$SMOKE_TEST_URL"
+            set +e
+            PROBE_OUTPUT="$("$EXTRACTOR_PATH" --no-playlist --no-warnings --skip-download --print '%(id)s|%(title)s' "$SMOKE_TEST_URL" 2>&1)"
+            PROBE_STATUS=$?
+            set -e
+            printf '%s\n' "$PROBE_OUTPUT"
+            if [ "$PROBE_STATUS" -ne 0 ]; then
+              if printf '%s\n' "$PROBE_OUTPUT" | grep -Eqi "sign in to confirm|not a bot"; then
+                echo "::warning::YouTube challenged the GitHub-hosted runner. The packaged native extractor launched successfully."
+              else
+                exit "$PROBE_STATUS"
+              fi
+            fi
           fi
 
       - name: Create checksums
