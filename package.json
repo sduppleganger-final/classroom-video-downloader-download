@@ -1,0 +1,74 @@
+{
+  "name": "classroom-video-downloader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Classroom demo app for downloading videos from supported social and video URLs.",
+  "main": "electron/main.js",
+  "scripts": {
+    "build:mac": "node scripts/build-mac.mjs",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+    "desktop": "electron electron/main.js",
+    "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
+    "setup:python": "python -m pip install -r requirements.txt",
+    "start": "node server.js",
+    "test": "node --test",
+    "test:desktop": "powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ffmpeg-static": "^5.3.0",
+    "youtube-dl-exec": "^3.1.9",
+    "yt-dlp-static": "^1.0.6"
+  },
+  "devDependencies": {
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "classroom.video.downloader",
+    "productName": "Classroom Video Downloader",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "assets/**/*",
+      "electron/**/*",
+      "public/**/*",
+      "src/**/*",
+      "server.js",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/youtube-dl-exec/bin/**/*",
+      "node_modules/yt-dlp-static/bin/**/*"
+    ],
+    "win": {
+      "icon": "assets/app-icon.ico",
+      "signExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "assets/app-icon.icns",
+      "category": "public.app-category.education",
+      "identity": null,
+      "artifactName": "Classroom.Video.Downloader.${version}.mac-${arch}.${ext}",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    }
+  }
+}

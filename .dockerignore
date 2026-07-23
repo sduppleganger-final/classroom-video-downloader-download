@@ -1,0 +1,12 @@
+node_modules
+downloads
+dist
+out
+.git
+.env
+*.log
+assets
+electron
+scripts
+test
+AGENTS_WIKI.md

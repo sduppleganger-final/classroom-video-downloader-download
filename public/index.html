@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Classroom Video Downloader</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="tool-panel" aria-labelledby="page-title">
+        <header class="tool-header">
+          <p class="eyebrow">Classroom Demo</p>
+          <h1 id="page-title">Video Downloader</h1>
+        </header>
+
+        <form id="download-form" class="download-form">
+          <div class="input-row">
+            <div class="field field-url">
+              <label for="video-url">Video URL</label>
+              <input
+                id="video-url"
+                name="videoUrl"
+                type="url"
+                inputmode="url"
+                placeholder="https://www.youtube.com/watch?v=VIDEO_ID"
+                autocomplete="off"
+                required
+              />
+            </div>
+
+            <div class="field field-resolution">
+              <label for="resolution">Download as</label>
+              <select id="resolution" name="resolution">
+                <option value="best">Best available</option>
+                <option value="1080">1080p or lower</option>
+                <option value="720">720p or lower</option>
+                <option value="480">480p or lower</option>
+                <option value="360">360p or lower</option>
+                <option value="mp3">MP3 audio only</option>
+              </select>
+            </div>
+
+            <div id="access-code-field" class="field field-access" hidden>
+              <label for="access-code">Class code</label>
+              <input
+                id="access-code"
+                name="accessCode"
+                type="password"
+                autocomplete="current-password"
+                placeholder="Access code"
+              />
+            </div>
+
+            <button type="submit" id="download-button">Download</button>
+          </div>
+        </form>
+
+        <section class="preview-panel" data-state="empty" aria-live="polite" aria-atomic="true">
+          <div class="preview-copy">
+            <p class="preview-label">Preview</p>
+            <p id="preview-title" class="preview-title">Enter a link to load a short preview.</p>
+            <p id="preview-meta" class="preview-meta"></p>
+          </div>
+
+          <div class="preview-frame">
+            <video id="preview-video" muted playsinline preload="metadata" controls hidden></video>
+            <p id="preview-message" class="preview-message">The first seconds will appear here.</p>
+          </div>
+        </section>
+
+        <section class="status-panel" aria-live="polite" aria-atomic="true">
+          <p id="status-label" class="status-label">Idle</p>
+          <p id="status-message" class="status-message">Paste a Twitter/X, YouTube, Facebook, Instagram, Vimeo, or TikTok link.</p>
+          <div id="download-session" class="download-session" hidden>
+            <div class="download-session-header">
+              <span class="download-spinner" aria-hidden="true"></span>
+              <span id="download-progress-percent" class="download-progress-percent">0%</span>
+            </div>
+            <div
+              class="download-progress-track"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              aria-label="Download progress"
+            >
+              <span id="download-progress-bar" class="download-progress-bar"></span>
+            </div>
+            <p id="download-progress-detail" class="download-progress-detail">Preparing download.</p>
+          </div>
+          <section id="diagnostic-panel" class="diagnostic-panel" aria-label="Diagnostic log" hidden>
+            <div class="diagnostic-header">
+              <p class="diagnostic-title">Diagnostic log</p>
+              <div class="diagnostic-actions">
+                <button type="button" id="copy-log-button" class="secondary-button">Copy log</button>
+                <button type="button" id="download-log-button" class="secondary-button">Download log</button>
+              </div>
+            </div>
+            <p id="diagnostic-copy-status" class="diagnostic-copy-status" aria-live="polite"></p>
+            <textarea id="diagnostic-log" class="diagnostic-log" readonly></textarea>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/config.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

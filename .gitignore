@@ -1,0 +1,12 @@
+node_modules/
+downloads/
+dist/
+dist-mac/
+dist-portable-*/
+out/
+output/
+tmp/
+__pycache__/
+.DS_Store
+*.log
+*.tgz

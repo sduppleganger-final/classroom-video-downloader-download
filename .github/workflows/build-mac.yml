@@ -1,0 +1,69 @@
+name: Build Mac Desktop App
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-14
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Inspect bundled media helper binaries
+        run: |
+          node - <<'NODE'
+          const ffmpeg = require("ffmpeg-static");
+          const { constants } = require("youtube-dl-exec");
+          const ytdlpStatic = require("yt-dlp-static");
+          console.log(`ffmpeg=${ffmpeg}`);
+          console.log(`youtube-dl-exec=${constants.YOUTUBE_DL_PATH}`);
+          console.log(`yt-dlp-static=${ytdlpStatic}`);
+          NODE
+          file "$(node -p 'require("ffmpeg-static")')"
+          file "$(node -p 'require("youtube-dl-exec").constants.YOUTUBE_DL_PATH')" || true
+          file "$(node -p 'require("yt-dlp-static")')" || true
+
+      - name: Build Mac package
+        run: npm run build:mac -- --arch=${{ matrix.arch }}
+
+      - name: Create checksums
+        run: shasum -a 256 dist-mac/*.zip | tee "dist-mac/SHA256SUMS-mac-${{ matrix.arch }}.txt"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: classroom-video-downloader-mac-${{ matrix.arch }}
+          path: |
+            dist-mac/*.zip
+            dist-mac/SHA256SUMS-mac-${{ matrix.arch }}.txt
+
+      - name: Upload to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v1.0.0 dist-mac/*.zip "dist-mac/SHA256SUMS-mac-${{ matrix.arch }}.txt" --clobber

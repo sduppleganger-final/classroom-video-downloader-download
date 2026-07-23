@@ -1,0 +1,1 @@
+window.CLASSROOM_VIDEO_API_BASE_URL = "";
