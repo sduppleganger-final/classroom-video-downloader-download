@@ -15,7 +15,7 @@ function getYtDlpCommandParts(args) {
   };
 }
 
-function getYtDlpCommandCandidates(args) {
+function getYtDlpCommandCandidates(args, options = {}) {
   const explicitPath = process.env.YT_DLP_PATH || process.env.YTDLP_BIN || "";
 
   if (explicitPath.trim()) {
@@ -29,6 +29,10 @@ function getYtDlpCommandCandidates(args) {
   }
 
   const candidates = [];
+
+  if ((options.platform || process.platform) === "darwin") {
+    addExecutableCandidate(candidates, getYtDlpStaticPath(), args, "bundled yt-dlp-static");
+  }
 
   addExecutableCandidate(candidates, getYoutubeDlExecPath(), args, "bundled youtube-dl-exec yt-dlp");
   addExecutableCandidate(candidates, getYtDlpStaticPath(), args, "bundled yt-dlp-static");
@@ -49,6 +53,14 @@ function getYtDlpExecutablePath() {
 }
 
 function getBundledYtDlpPath() {
+  if (process.platform === "darwin") {
+    const nativeMacPath = getYtDlpStaticPath();
+
+    if (nativeMacPath) {
+      return nativeMacPath;
+    }
+  }
+
   const youtubeDlExecPath = getYoutubeDlExecPath();
 
   if (youtubeDlExecPath) {
@@ -95,6 +107,20 @@ function hasYtDlp() {
   return false;
 }
 
+function isYtDlpRuntimeUnavailable(output) {
+  const normalized = String(output || "").toLowerCase();
+
+  return [
+    "unsupported version of python",
+    "env: python3: no such file or directory",
+    "python3: command not found",
+    "modulenotfounderror: no module named 'yt_dlp'",
+    "bad cpu type in executable",
+    "cannot execute binary file",
+    "exec format error"
+  ].some((pattern) => normalized.includes(pattern));
+}
+
 function addExecutableCandidate(candidates, executablePath, args, label) {
   if (!executablePath) {
     return;
@@ -130,5 +156,6 @@ module.exports = {
   getYtDlpCommandCandidates,
   getYtDlpCommandParts,
   getYtDlpExecutablePath,
-  hasYtDlp
+  hasYtDlp,
+  isYtDlpRuntimeUnavailable
 };

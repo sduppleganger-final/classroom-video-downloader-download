@@ -1,12 +1,19 @@
 const { spawn } = require("child_process");
 const { createFailureDiagnostic } = require("./diagnostics");
-const { getYtDlpCommandCandidates, getYtDlpCommandParts } = require("./ytdlpCommand");
+const {
+  getYtDlpCommandCandidates,
+  getYtDlpCommandParts,
+  isYtDlpRuntimeUnavailable
+} = require("./ytdlpCommand");
 
-function getVideoPreview(url, resolution) {
+function getVideoPreview(url, resolution, options = {}) {
   return new Promise((resolve, reject) => {
     const startedAtMs = Date.now();
     const previewArgs = buildPreviewArgs(url, resolution);
-    const commandCandidates = getYtDlpCommandCandidates(previewArgs);
+    const commandCandidates =
+      Array.isArray(options.commandCandidates) && options.commandCandidates.length > 0
+        ? options.commandCandidates
+        : getYtDlpCommandCandidates(previewArgs);
     const startupFailures = [];
     let settled = false;
 
@@ -92,6 +99,17 @@ function getVideoPreview(url, resolution) {
         }
 
         if (code !== 0) {
+          if (
+            candidateIndex + 1 < commandCandidates.length &&
+            isYtDlpRuntimeUnavailable(stderr || stdout)
+          ) {
+            startupFailures.push(
+              describeProcessFailure(commandParts, code, stderr || stdout)
+            );
+            startPreviewAttempt(candidateIndex + 1);
+            return;
+          }
+
           const userMessage =
             "Could not load a preview for that link. You can still try downloading it.";
 
@@ -162,6 +180,16 @@ function describeStartupFailure(commandParts, error) {
     errorSyscall: error?.syscall || "not set",
     errorPath: error?.path || "not set",
     errorMessage: error?.message || String(error)
+  };
+}
+
+function describeProcessFailure(commandParts, exitCode, output) {
+  return {
+    label: commandParts?.label || "unlabeled extractor",
+    command: commandParts?.command || "not resolved",
+    errorName: "ProcessExit",
+    errorCode: exitCode,
+    errorMessage: String(output || "Extractor exited without output.").slice(-2000)
   };
 }
 

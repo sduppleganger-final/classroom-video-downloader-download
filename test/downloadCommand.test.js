@@ -279,6 +279,68 @@ console.log("__CVD_HEIGHT__720");
   }
 });
 
+test("tries a backup extractor when the primary requires unsupported Python", async () => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-downloads-"));
+  const failedExtractor = path.join(downloadsDir, "python-dependent-extractor.js");
+  const backupExtractor = path.join(downloadsDir, "native-backup-extractor.js");
+  const outputPath = path.join(downloadsDir, "native fallback video.mp4");
+  const progressMessages = [];
+
+  fs.writeFileSync(
+    failedExtractor,
+    `console.error("ImportError: You are using an unsupported version of Python."); process.exit(1);`
+  );
+  fs.writeFileSync(
+    backupExtractor,
+    `
+const fs = require("fs");
+const outputPath = ${JSON.stringify(outputPath)};
+fs.writeFileSync(outputPath, "video");
+console.log("__CVD_FILE__" + outputPath);
+console.log("__CVD_WIDTH__1280");
+console.log("__CVD_HEIGHT__720");
+`
+  );
+
+  try {
+    const result = await downloadVideo(
+      "https://example.com/watch",
+      {
+        downloadType: "video",
+        format: "best",
+        label: "Best available",
+        value: "best"
+      },
+      downloadsDir,
+      {
+        commandCandidates: [
+          {
+            command: process.execPath,
+            args: [failedExtractor],
+            label: "Python-dependent extractor"
+          },
+          {
+            command: process.execPath,
+            args: [backupExtractor],
+            label: "native backup extractor"
+          }
+        ],
+        onProgress(progress) {
+          progressMessages.push(progress.message);
+        }
+      }
+    );
+
+    assert.equal(result.filePath, outputPath);
+    assert.equal(
+      progressMessages.includes("Extractor runtime unavailable. Trying backup extractor."),
+      true
+    );
+  } finally {
+    fs.rmSync(downloadsDir, { recursive: true, force: true });
+  }
+});
+
 test("resolves the final MP3 when yt-dlp reports a pre-conversion path", () => {
   const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-downloads-"));
 

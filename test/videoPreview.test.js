@@ -1,8 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const {
   buildPreviewArgs,
   findStreamUrl,
+  getVideoPreview,
   parsePreviewOutput
 } = require("../src/videoPreview");
 
@@ -55,4 +59,45 @@ test("finds stream URLs from requested downloads", () => {
 
 test("throws when preview metadata has no stream URL", () => {
   assert.throws(() => parsePreviewOutput(JSON.stringify({ title: "No stream" })));
+});
+
+test("retries preview metadata with a backup after an unsupported Python runtime", async () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-preview-fallback-"));
+  const failedExtractor = path.join(fixtureRoot, "failed-extractor.js");
+  const backupExtractor = path.join(fixtureRoot, "backup-extractor.js");
+
+  fs.writeFileSync(
+    failedExtractor,
+    `console.error("ImportError: You are using an unsupported version of Python."); process.exit(1);`
+  );
+  fs.writeFileSync(
+    backupExtractor,
+    `console.log(JSON.stringify({ title: "Fallback preview", duration: 12, url: "https://cdn.example/video.mp4" }));`
+  );
+
+  try {
+    const preview = await getVideoPreview(
+      "https://example.com/video",
+      { previewFormat: "best" },
+      {
+        commandCandidates: [
+          {
+            command: process.execPath,
+            args: [failedExtractor],
+            label: "Python-dependent extractor"
+          },
+          {
+            command: process.execPath,
+            args: [backupExtractor],
+            label: "native backup extractor"
+          }
+        ]
+      }
+    );
+
+    assert.equal(preview.title, "Fallback preview");
+    assert.equal(preview.streamUrl, "https://cdn.example/video.mp4");
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });

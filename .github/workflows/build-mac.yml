@@ -2,6 +2,11 @@ name: Build Mac Desktop App
 
 on:
   workflow_dispatch:
+    inputs:
+      smoke_test_url:
+        description: Optional media URL for packaged extractor metadata verification
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -53,6 +58,20 @@ jobs:
 
       - name: Build Mac package
         run: npm run build:mac -- --arch=${{ matrix.arch }}
+
+      - name: Smoke test packaged native extractor
+        env:
+          SMOKE_TEST_URL: ${{ inputs.smoke_test_url }}
+        run: |
+          SMOKE_DIR="$RUNNER_TEMP/classroom-video-downloader-${{ matrix.arch }}"
+          unzip -q dist-mac/*.zip -d "$SMOKE_DIR"
+          EXTRACTOR_PATH="$(find "$SMOKE_DIR" -type f -path '*/app.asar.unpacked/node_modules/yt-dlp-static/bin/mac/yt-dlp' -print -quit)"
+          test -n "$EXTRACTOR_PATH"
+          file "$EXTRACTOR_PATH"
+          "$EXTRACTOR_PATH" --version
+          if [ -n "$SMOKE_TEST_URL" ]; then
+            "$EXTRACTOR_PATH" --no-playlist --no-warnings --skip-download --print '%(id)s|%(title)s' "$SMOKE_TEST_URL"
+          fi
 
       - name: Create checksums
         run: shasum -a 256 dist-mac/*.zip | tee "dist-mac/SHA256SUMS-mac-${{ matrix.arch }}.txt"
