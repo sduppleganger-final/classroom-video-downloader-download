@@ -1,6 +1,6 @@
 const path = require("path");
 const { app: electronApp, BrowserWindow, dialog, shell } = require("electron");
-const { createApp } = require("../server");
+const { createApp, hasFfmpeg, hasYtDlp } = require("../server");
 const { getAvailableDownloadPath } = require("./downloadPath");
 
 let localServer;
@@ -20,6 +20,14 @@ electronApp.whenReady().then(async () => {
     await startLocalServer();
     await createMainWindow();
   } catch (error) {
+    if (isSmokeTest) {
+      console.error(
+        `DESKTOP_SMOKE_FAILED ${error instanceof Error ? error.stack || error.message : String(error)}`
+      );
+      electronApp.exit(1);
+      return;
+    }
+
     dialog.showErrorBox(
       "Video Downloader failed to start",
       error instanceof Error ? error.message : String(error)
@@ -105,6 +113,10 @@ async function createMainWindow() {
   await mainWindow.loadURL(appUrl);
 
   if (isSmokeTest) {
+    const helperStatus = {
+      ffmpeg: hasFfmpeg(),
+      ytDlp: hasYtDlp()
+    };
     const result = await mainWindow.webContents.executeJavaScript(`
       (() => {
         const panel = document.querySelector('.tool-panel');
@@ -133,11 +145,15 @@ async function createMainWindow() {
       })();
     `);
 
-    if (!result.panelVisible || !result.previewVisible) {
-      throw new Error(`Desktop smoke test loaded a blank page: ${JSON.stringify(result)}`);
+    if (!result.panelVisible || !result.previewVisible || !helperStatus.ffmpeg || !helperStatus.ytDlp) {
+      throw new Error(
+        `Desktop smoke test failed: ${JSON.stringify({ ...result, helperStatus })}`
+      );
     }
 
-    console.log(`DESKTOP_SMOKE_OK ${appUrl} ${JSON.stringify(result)}`);
+    console.log(
+      `DESKTOP_SMOKE_OK ${appUrl} ${JSON.stringify({ ...result, helperStatus })}`
+    );
     electronApp.quit();
   }
 }

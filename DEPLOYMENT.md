@@ -35,7 +35,7 @@ npm ci
 npm run build:mac -- --arch=x64
 ```
 
-The generated `.zip` files are written to `dist-mac`. The app is unsigned, so macOS Gatekeeper may require users to right-click the app, choose Open, and confirm the first launch. The GitHub Actions workflow `.github/workflows/build-mac.yml` builds both Mac variants on native GitHub-hosted macOS runners and uploads them to the `v1.0.0` GitHub release.
+The generated `.zip` files are written to `dist-mac`. The app is unsigned, so macOS Gatekeeper may require users to right-click the app, choose Open, and confirm the first launch. The GitHub Actions workflow `.github/workflows/build-mac.yml` builds both Mac variants on native GitHub-hosted macOS runners and uploads them to the release tag matching the version in `package.json`.
 
 ## Docker Quick Start
 

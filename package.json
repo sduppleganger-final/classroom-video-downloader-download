@@ -1,6 +1,6 @@
 {
   "name": "classroom-video-downloader",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Classroom demo app for downloading videos from supported social and video URLs.",
   "main": "electron/main.js",
@@ -46,6 +46,7 @@
     "win": {
       "icon": "assets/app-icon.ico",
       "signExecutable": false,
+      "artifactName": "Classroom.Video.Downloader.${version}.${ext}",
       "target": [
         {
           "target": "portable",

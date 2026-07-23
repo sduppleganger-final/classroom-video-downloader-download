@@ -64,7 +64,10 @@ if (-not $buildSucceeded) {
 }
 
 $portableExe = Get-ChildItem -LiteralPath $buildOutput -Filter "*.exe" |
-  Where-Object { $_.Name -like "Classroom Video Downloader*.exe" } |
+  Where-Object {
+    $_.Name -like "Classroom Video Downloader*.exe" -or
+    $_.Name -like "Classroom.Video.Downloader.*.exe"
+  } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
 
