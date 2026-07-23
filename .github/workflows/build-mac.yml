@@ -59,7 +59,9 @@ jobs:
 
       - name: Resolve release tag
         id: release
-        run: echo "tag=v$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          echo "tag=v${APP_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
