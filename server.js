@@ -36,6 +36,9 @@ function createApp(options = {}) {
   const finalDownloadsDir =
     options.finalDownloadsDir || process.env.FINAL_DOWNLOADS_DIR || "";
   const hostedMode = options.hostedMode ?? process.env.HOSTED_MODE === "1";
+  const openFileLocation =
+    typeof options.openFileLocation === "function" ? options.openFileLocation : null;
+  const canOpenFileLocation = Boolean(!hostedMode && finalDownloadsDir && openFileLocation);
   const accessControl = createAccessControl(
     options.accessCode ?? process.env.CLASSROOM_ACCESS_CODE
   );
@@ -77,7 +80,8 @@ function createApp(options = {}) {
     response.json({
       hostedMode,
       accessCodeRequired: accessControl.required,
-      downloadMode: hostedMode ? "job" : "direct"
+      downloadMode: hostedMode ? "job" : "direct",
+      canOpenFileLocation
     });
   });
 
@@ -86,6 +90,31 @@ function createApp(options = {}) {
   });
 
   app.use("/api", accessControl.middleware);
+
+  app.post("/api/open-file-location", async (request, response) => {
+    if (!canOpenFileLocation) {
+      response.status(404).json({ error: "Opening a file location is not available here." });
+      return;
+    }
+
+    const filePath = resolveOpenableDownloadPath(request.body?.filePath, finalDownloadsDir);
+
+    if (!filePath) {
+      response.status(400).json({ error: "The saved download could not be found." });
+      return;
+    }
+
+    try {
+      await openFileLocation(filePath);
+      response.json({ opened: true });
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+
+      response.status(500).json({
+        error: `The file was saved, but its location could not be opened. ${details}`
+      });
+    }
+  });
 
   app.post("/api/preview", async (request, response) => {
     const videoUrl = typeof request.body?.url === "string" ? request.body.url.trim() : "";
@@ -330,6 +359,25 @@ async function saveDirectDownloadToFinalDirectory({
         }
       })
     };
+  }
+}
+
+function resolveOpenableDownloadPath(filePath, finalDownloadsDir) {
+  if (typeof filePath !== "string" || !filePath.trim() || !finalDownloadsDir) {
+    return "";
+  }
+
+  try {
+    const realDownloadsDir = fs.realpathSync(finalDownloadsDir);
+    const realFilePath = fs.realpathSync(filePath.trim());
+
+    if (!isInsideDirectory(realFilePath, realDownloadsDir)) {
+      return "";
+    }
+
+    return fs.statSync(realFilePath).isFile() ? realFilePath : "";
+  } catch {
+    return "";
   }
 }
 

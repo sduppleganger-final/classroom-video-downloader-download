@@ -194,6 +194,16 @@ select:disabled {
   display: none;
 }
 
+.file-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.file-actions[hidden] {
+  display: none;
+}
+
 .download-session-header {
   display: flex;
   align-items: center;

@@ -75,3 +75,18 @@ test("frontend exposes copyable and downloadable diagnostic logs for failures", 
   assert.match(stylesCss, /\.diagnostic-panel/);
   assert.match(stylesCss, /\.diagnostic-log/);
 });
+
+test("desktop completion exposes an open file location action", () => {
+  const indexHtml = fs.readFileSync(path.join(projectRoot, "public", "index.html"), "utf8");
+  const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
+  const stylesCss = fs.readFileSync(path.join(projectRoot, "public", "styles.css"), "utf8");
+  const electronMain = fs.readFileSync(path.join(projectRoot, "electron", "main.js"), "utf8");
+
+  assert.match(indexHtml, /id="open-file-location-button"/);
+  assert.match(indexHtml, />\s*Open file location\s*</);
+  assert.match(appJs, /showFileLocationAction\(payload\.savedPath\)/);
+  assert.match(appJs, /appConfig\.canOpenFileLocation/);
+  assert.match(appJs, /\/api\/open-file-location/);
+  assert.match(stylesCss, /\.file-actions\[hidden\]/);
+  assert.match(electronMain, /shell\.showItemInFolder\(filePath\)/);
+});

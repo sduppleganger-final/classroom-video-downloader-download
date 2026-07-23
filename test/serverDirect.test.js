@@ -8,6 +8,7 @@ const { createApp } = require("../server");
 test("direct desktop mode saves completed downloads to a final downloads folder", async (t) => {
   const workingDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-working-"));
   const finalDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-final-"));
+  let openedFilePath = "";
 
   t.after(() => {
     fs.rmSync(workingDownloadsDir, { recursive: true, force: true });
@@ -18,6 +19,9 @@ test("direct desktop mode saves completed downloads to a final downloads folder"
     hostedMode: false,
     downloadsDir: workingDownloadsDir,
     finalDownloadsDir,
+    openFileLocation: async (filePath) => {
+      openedFilePath = filePath;
+    },
     downloadVideo: async (_url, _resolution, downloadsDir) => {
       fs.writeFileSync(path.join(downloadsDir, "lecture.mp3"), "audio-demo");
       return { fileName: "lecture.mp3" };
@@ -42,6 +46,66 @@ test("direct desktop mode saves completed downloads to a final downloads folder"
   assert.equal(payload.savedPath, path.join(finalDownloadsDir, "lecture.mp3"));
   assert.equal(fs.readFileSync(payload.savedPath, "utf8"), "audio-demo");
   assert.equal(fs.readFileSync(path.join(workingDownloadsDir, "lecture.mp3"), "utf8"), "audio-demo");
+
+  const config = await fetchJson(`http://127.0.0.1:${server.address().port}/api/config`);
+  assert.equal(config.canOpenFileLocation, true);
+
+  const openResult = await fetchJson(
+    `http://127.0.0.1:${server.address().port}/api/open-file-location`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ filePath: payload.savedPath })
+    }
+  );
+
+  assert.equal(openResult.opened, true);
+  assert.equal(openedFilePath, fs.realpathSync(payload.savedPath));
+});
+
+test("open file location rejects paths outside the final downloads folder", async (t) => {
+  const workingDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-working-"));
+  const finalDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-final-"));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-outside-"));
+  const outsideFilePath = path.join(outsideDir, "outside.mp4");
+  let opened = false;
+
+  fs.writeFileSync(outsideFilePath, "outside");
+
+  t.after(() => {
+    fs.rmSync(workingDownloadsDir, { recursive: true, force: true });
+    fs.rmSync(finalDownloadsDir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  const app = createApp({
+    hostedMode: false,
+    downloadsDir: workingDownloadsDir,
+    finalDownloadsDir,
+    openFileLocation: async () => {
+      opened = true;
+    }
+  });
+  const server = await listen(app);
+  t.after(() => server.close());
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/open-file-location`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ filePath: outsideFilePath })
+    }
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error, "The saved download could not be found.");
+  assert.equal(opened, false);
 });
 
 test("direct desktop mode returns resolution adjustment notices", async (t) => {

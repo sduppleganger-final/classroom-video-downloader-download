@@ -18,6 +18,8 @@ const downloadProgressTrack = document.querySelector(".download-progress-track")
 const downloadProgressBar = document.querySelector("#download-progress-bar");
 const downloadProgressPercent = document.querySelector("#download-progress-percent");
 const downloadProgressDetail = document.querySelector("#download-progress-detail");
+const fileActions = document.querySelector("#file-actions");
+const openFileLocationButton = document.querySelector("#open-file-location-button");
 const diagnosticPanel = document.querySelector("#diagnostic-panel");
 const diagnosticLog = document.querySelector("#diagnostic-log");
 const diagnosticCopyStatus = document.querySelector("#diagnostic-copy-status");
@@ -32,11 +34,13 @@ let previewRequestId = 0;
 let downloadFrame;
 let progressTimer;
 let currentProgressPercent = 0;
+let currentSavedPath = "";
 let currentDiagnosticFileName = "classroom-video-downloader-log.txt";
 let appConfig = {
   hostedMode: false,
   accessCodeRequired: false,
-  downloadMode: "direct"
+  downloadMode: "direct",
+  canOpenFileLocation: false
 };
 
 input.addEventListener("input", schedulePreview);
@@ -51,15 +55,18 @@ window.addEventListener("native-download-complete", (event) => {
 
   finishDownloadSession("Saved to your computer.");
   setState("success", "Saved", `${fileName} has been saved. ${location}`);
+  showFileLocationAction(filePath);
 });
 window.addEventListener("native-download-error", (event) => {
   stopDownloadSession();
+  hideFileLocationAction();
   clearDiagnosticLog();
   setState("error", "Error", event.detail?.message || "The download could not be saved.");
 });
 
 copyLogButton.addEventListener("click", copyDiagnosticLog);
 downloadLogButton.addEventListener("click", downloadDiagnosticLog);
+openFileLocationButton.addEventListener("click", openSavedFileLocation);
 
 loadConfig();
 
@@ -72,6 +79,7 @@ form.addEventListener("submit", async (event) => {
     : "Preparing the local download.";
 
   clearDiagnosticLog();
+  hideFileLocationAction();
   startDownloadSession(progressDetail);
   setState("loading", action, `Finding and downloading ${resolutionLabel.toLowerCase()}...`);
 
@@ -457,6 +465,50 @@ function showDownloadSaved(payload) {
 
   finishDownloadSession("Saved to your computer.");
   setState("success", "Saved", `${notice}${fileName} has been saved to ${payload.savedPath}.`);
+  showFileLocationAction(payload.savedPath);
+}
+
+function showFileLocationAction(filePath) {
+  currentSavedPath = typeof filePath === "string" ? filePath : "";
+  fileActions.hidden = !appConfig.canOpenFileLocation || !currentSavedPath;
+}
+
+function hideFileLocationAction() {
+  currentSavedPath = "";
+  fileActions.hidden = true;
+}
+
+async function openSavedFileLocation() {
+  if (!currentSavedPath || !appConfig.canOpenFileLocation) {
+    return;
+  }
+
+  openFileLocationButton.disabled = true;
+
+  try {
+    const response = await fetchWithClassroomAccess(apiUrl("/api/open-file-location"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ filePath: currentSavedPath })
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw createPayloadError(payload, "The file location could not be opened.");
+    }
+
+    setState(
+      "success",
+      "Location opened",
+      "Finder or File Explorer opened with the downloaded file selected."
+    );
+  } catch (error) {
+    setState("error", "Could not open location", error.message);
+  } finally {
+    openFileLocationButton.disabled = false;
+  }
 }
 
 function startAutomaticDownload(payload) {

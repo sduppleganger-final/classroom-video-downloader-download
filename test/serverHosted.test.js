@@ -36,6 +36,18 @@ test("hosted mode runs protected download jobs", async (t) => {
   assert.equal(config.hostedMode, true);
   assert.equal(config.accessCodeRequired, true);
   assert.equal(config.downloadMode, "job");
+  assert.equal(config.canOpenFileLocation, false);
+
+  const unsupportedFileLocation = await fetch(`${baseUrl}/api/open-file-location`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Classroom-Access-Code": "class-code"
+    },
+    body: JSON.stringify({ filePath: "/tmp/hosted.mp4" })
+  });
+
+  assert.equal(unsupportedFileLocation.status, 404);
 
   const unauthorized = await fetch(`${baseUrl}/api/download`, {
     method: "POST",

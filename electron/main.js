@@ -59,7 +59,10 @@ function startLocalServer() {
   return new Promise((resolve, reject) => {
     const app = createApp({
       downloadsDir: path.join(electronApp.getPath("userData"), "downloads"),
-      finalDownloadsDir: electronApp.getPath("downloads")
+      finalDownloadsDir: electronApp.getPath("downloads"),
+      openFileLocation(filePath) {
+        shell.showItemInFolder(filePath);
+      }
     });
     const server = app.listen(0, "127.0.0.1", () => {
       localServer = server;
