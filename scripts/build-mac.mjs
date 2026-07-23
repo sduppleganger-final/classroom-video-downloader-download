@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareMacYtDlp } from "./prepare-mac-ytdlp.mjs";
+import { prepareWhisper } from "./prepare-whisper.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
@@ -26,6 +27,7 @@ if (!existsSync(builder)) {
 }
 
 await prepareMacYtDlp({ projectRoot });
+await prepareWhisper({ projectRoot, arch: requestedArch });
 
 mkdirSync(buildRoot, { recursive: true });
 

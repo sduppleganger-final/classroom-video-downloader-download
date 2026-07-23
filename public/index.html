@@ -55,16 +55,55 @@
             <button type="submit" id="download-button">Download</button>
           </div>
 
-          <div class="source-transcription-options">
-            <label class="checkbox-field" for="use-source-transcription">
-              <input
-                id="use-source-transcription"
-                name="useSourceTranscription"
-                type="checkbox"
-                aria-describedby="subtitle-availability"
-              />
-              <span>Use transcription from source if available</span>
-            </label>
+          <fieldset class="transcription-options">
+            <legend>Transcription</legend>
+
+            <div class="transcription-mode-list">
+              <label class="transcription-mode" for="transcription-none">
+                <input
+                  id="transcription-none"
+                  name="transcriptionMode"
+                  type="radio"
+                  value="none"
+                  checked
+                />
+                <span>
+                  <strong>No transcription</strong>
+                  <small>Download the video without captions or transcript files.</small>
+                </span>
+              </label>
+
+              <label class="transcription-mode" for="transcription-source">
+                <input
+                  id="transcription-source"
+                  name="transcriptionMode"
+                  type="radio"
+                  value="source"
+                  aria-describedby="subtitle-availability"
+                />
+                <span>
+                  <strong>Use transcription from source if available</strong>
+                  <small>Use subtitles supplied by the platform. This is usually faster.</small>
+                </span>
+              </label>
+
+              <label class="transcription-mode" for="transcription-whisper">
+                <input
+                  id="transcription-whisper"
+                  name="transcriptionMode"
+                  type="radio"
+                  value="whisper"
+                  aria-describedby="whisper-resource-notice whisper-estimate"
+                />
+                <span>
+                  <strong>Create automatic transcription with Whisper</strong>
+                  <small id="whisper-resource-notice">
+                    Runs the bundled Small AI model locally. It can take considerable time
+                    and use additional processor, memory, and battery resources.
+                  </small>
+                </span>
+              </label>
+            </div>
 
             <div id="subtitle-language-field" class="field field-subtitle-language" hidden>
               <label for="subtitle-language">Subtitle language</label>
@@ -74,7 +113,22 @@
             </div>
 
             <p id="subtitle-availability" class="subtitle-availability" aria-live="polite"></p>
-          </div>
+
+            <div id="whisper-options" class="whisper-options" hidden>
+              <label class="checkbox-field" for="save-original-video">
+                <input
+                  id="save-original-video"
+                  name="saveOriginalVideo"
+                  type="checkbox"
+                  checked
+                />
+                <span>Also save non-captioned video</span>
+              </label>
+              <p id="whisper-estimate" class="whisper-estimate" aria-live="polite">
+                Load a preview to estimate local transcription time.
+              </p>
+            </div>
+          </fieldset>
         </form>
 
         <section class="preview-panel" data-state="empty" aria-live="polite" aria-atomic="true">
@@ -109,6 +163,14 @@
               <span id="download-progress-bar" class="download-progress-bar"></span>
             </div>
             <p id="download-progress-detail" class="download-progress-detail">Preparing download.</p>
+            <button
+              type="button"
+              id="cancel-transcription-button"
+              class="secondary-button cancel-transcription-button"
+              hidden
+            >
+              Cancel transcription
+            </button>
           </div>
           <div id="file-actions" class="file-actions" hidden>
             <button type="button" id="open-file-location-button" class="secondary-button">

@@ -1,6 +1,7 @@
 const path = require("path");
+const fs = require("fs");
 const { app: electronApp, BrowserWindow, dialog, shell } = require("electron");
-const { createApp, hasFfmpeg, hasYtDlp } = require("../server");
+const { createApp, hasFfmpeg, hasWhisper, hasYtDlp } = require("../server");
 const { getAvailableDownloadPath } = require("./downloadPath");
 
 let localServer;
@@ -118,6 +119,7 @@ async function createMainWindow() {
   if (isSmokeTest) {
     const helperStatus = {
       ffmpeg: hasFfmpeg(),
+      whisper: hasWhisper(),
       ytDlp: hasYtDlp()
     };
     const result = await mainWindow.webContents.executeJavaScript(`
@@ -125,12 +127,17 @@ async function createMainWindow() {
         const panel = document.querySelector('.tool-panel');
         const preview = document.querySelector('.preview-panel');
         const heading = document.querySelector('#page-title');
-        const sourceTranscription = document.querySelector('#use-source-transcription');
+        const sourceTranscription = document.querySelector('#transcription-source');
+        const whisperTranscription = document.querySelector('#transcription-whisper');
+        const saveOriginalVideo = document.querySelector('#save-original-video');
         const subtitleLanguageField = document.querySelector('#subtitle-language-field');
         const panelRect = panel ? panel.getBoundingClientRect() : null;
         const previewRect = preview ? preview.getBoundingClientRect() : null;
         const sourceTranscriptionRect = sourceTranscription
           ? sourceTranscription.getBoundingClientRect()
+          : null;
+        const whisperTranscriptionRect = whisperTranscription
+          ? whisperTranscription.getBoundingClientRect()
           : null;
         return {
           title: document.title,
@@ -142,6 +149,12 @@ async function createMainWindow() {
             sourceTranscriptionRect.width > 0 &&
             sourceTranscriptionRect.height > 0
           ),
+          whisperTranscriptionVisible: Boolean(
+            whisperTranscription &&
+            whisperTranscriptionRect.width > 0 &&
+            whisperTranscriptionRect.height > 0
+          ),
+          saveOriginalVideoDefault: Boolean(saveOriginalVideo && saveOriginalVideo.checked),
           subtitleLanguageHidden: Boolean(subtitleLanguageField && subtitleLanguageField.hidden),
           panelRect: panelRect ? {
             width: Math.round(panelRect.width),
@@ -159,12 +172,26 @@ async function createMainWindow() {
       })();
     `);
 
+    if (process.env.ELECTRON_CAPTURE_PATH) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        const screenshot = await mainWindow.webContents.capturePage();
+        fs.writeFileSync(process.env.ELECTRON_CAPTURE_PATH, screenshot.toPNG());
+      } catch (error) {
+        result.screenshotCaptureError =
+          error instanceof Error ? error.message : String(error);
+      }
+    }
+
     if (
       !result.panelVisible ||
       !result.previewVisible ||
       !result.sourceTranscriptionVisible ||
+      !result.whisperTranscriptionVisible ||
+      !result.saveOriginalVideoDefault ||
       !result.subtitleLanguageHidden ||
       !helperStatus.ffmpeg ||
+      !helperStatus.whisper ||
       !helperStatus.ytDlp
     ) {
       throw new Error(

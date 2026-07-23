@@ -19,6 +19,12 @@ if (-not (Test-Path -LiteralPath $builder)) {
   throw "electron-builder was not found. Run npm install first."
 }
 
+Write-Host "Preparing the bundled Whisper Small runtime and model..."
+& node (Join-Path $projectRoot "scripts\prepare-whisper.mjs") "--arch=x64"
+if ($LASTEXITCODE -ne 0) {
+  throw "The bundled Whisper runtime or model could not be prepared."
+}
+
 New-Item -ItemType Directory -Force -Path $finalOutput | Out-Null
 
 try {

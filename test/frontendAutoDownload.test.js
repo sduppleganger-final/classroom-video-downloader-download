@@ -21,7 +21,8 @@ test("frontend automatically starts browser downloads after completion", () => {
   const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
 
   assert.match(appJs, /startAutomaticDownload\(payload\)/);
-  assert.match(appJs, /startAutomaticDownload\(\{\s*fileName: job\.fileName,/);
+  assert.match(appJs, /const completedPayload = \{\s*fileName: job\.fileName,/);
+  assert.match(appJs, /startAutomaticDownload\(completedPayload\)/);
   assert.match(appJs, /downloadFrame\.src = url/);
 });
 
@@ -96,14 +97,14 @@ test("frontend offers source transcription discovery and language selection", ()
   const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
   const stylesCss = fs.readFileSync(path.join(projectRoot, "public", "styles.css"), "utf8");
 
-  assert.match(indexHtml, /id="use-source-transcription"/);
+  assert.match(indexHtml, /id="transcription-source"/);
   assert.match(indexHtml, />Use transcription from source if available</);
   assert.match(indexHtml, /id="subtitle-language"/);
   assert.match(indexHtml, /id="subtitle-availability"/);
   assert.match(appJs, /payload\.subtitleLanguages/);
-  assert.match(appJs, /sourceTranscription: sourceTranscription\.value/);
+  assert.match(appJs, /transcription: transcription\.value/);
   assert.match(appJs, /Choose a source subtitle language before downloading/);
-  assert.match(stylesCss, /\.checkbox-field input/);
+  assert.match(stylesCss, /\.transcription-mode input/);
   assert.match(stylesCss, /\.field-subtitle-language\[hidden\]/);
 });
 
@@ -113,5 +114,29 @@ test("frontend automatically downloads completed SRT and TXT artifacts", () => {
   assert.match(appJs, /artifacts: job\.artifacts/);
   assert.match(appJs, /payload\.artifacts/);
   assert.match(appJs, /triggerAdditionalBrowserDownload/);
-  assert.match(appJs, /The SRT subtitles and TXT transcript will follow/);
+  assert.match(appJs, /items\.push\("SRT subtitles"\)/);
+  assert.match(appJs, /items\.push\("TXT transcript"\)/);
+  assert.match(appJs, /will follow/);
+});
+
+test("frontend offers local Whisper with estimates, original-video retention, and cancellation", () => {
+  const indexHtml = fs.readFileSync(path.join(projectRoot, "public", "index.html"), "utf8");
+  const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
+  const stylesCss = fs.readFileSync(path.join(projectRoot, "public", "styles.css"), "utf8");
+
+  assert.match(indexHtml, /id="transcription-none"/);
+  assert.match(indexHtml, /id="transcription-whisper"/);
+  assert.match(indexHtml, /bundled Small AI model locally/);
+  assert.match(indexHtml, /id="save-original-video"[\s\S]*type="checkbox"[\s\S]*checked/);
+  assert.match(indexHtml, /id="whisper-estimate"/);
+  assert.match(indexHtml, /id="cancel-transcription-button"/);
+  assert.match(appJs, /Estimated transcription time on this computer/);
+  assert.match(appJs, /mode: "whisper"/);
+  assert.match(appJs, /saveOriginal: saveOriginalVideoCheckbox\.checked/);
+  assert.match(appJs, /estimatedSecondsRemaining/);
+  assert.match(appJs, /Detected language/);
+  assert.match(appJs, /\/cancel/);
+  assert.match(appJs, /The non-captioned video was kept/);
+  assert.match(stylesCss, /\.whisper-estimate/);
+  assert.match(stylesCss, /\.cancel-transcription-button/);
 });

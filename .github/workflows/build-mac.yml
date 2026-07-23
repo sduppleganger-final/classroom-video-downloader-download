@@ -76,6 +76,15 @@ jobs:
           EXTRACTOR_VERSION="$("$EXTRACTOR_PATH" --version)"
           echo "yt-dlp version: $EXTRACTOR_VERSION"
           test "$EXTRACTOR_VERSION" = "2026.07.04"
+          WHISPER_PATH="$(find "$SMOKE_DIR" -type f -path '*/Resources/whisper/runtime/whisper-cli' -print -quit)"
+          WHISPER_MODEL="$(find "$SMOKE_DIR" -type f -path '*/Resources/whisper/models/ggml-small.bin' -print -quit)"
+          test -n "$WHISPER_PATH"
+          test -n "$WHISPER_MODEL"
+          file "$WHISPER_PATH"
+          "$WHISPER_PATH" --version
+          MODEL_SIZE="$(stat -f '%z' "$WHISPER_MODEL")"
+          echo "Whisper Small model size: $MODEL_SIZE"
+          test "$MODEL_SIZE" -eq 487601967
           if [ -n "$SMOKE_TEST_URL" ]; then
             set +e
             PROBE_OUTPUT="$("$EXTRACTOR_PATH" --no-playlist --no-warnings --skip-download --print '%(id)s|%(title)s' "$SMOKE_TEST_URL" 2>&1)"

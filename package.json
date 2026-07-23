@@ -1,6 +1,6 @@
 {
   "name": "classroom-video-downloader",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Classroom demo app for downloading videos from supported social and video URLs.",
   "main": "electron/main.js",
@@ -10,6 +10,7 @@
     "desktop": "electron electron/main.js",
     "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
     "prepare:mac-ytdlp": "node scripts/prepare-mac-ytdlp.mjs",
+    "prepare:whisper": "node scripts/prepare-whisper.mjs",
     "setup:python": "python -m pip install -r requirements.txt",
     "start": "node server.js",
     "test": "node --test",
@@ -43,6 +44,20 @@
       "node_modules/ffmpeg-static/**/*",
       "node_modules/youtube-dl-exec/bin/**/*",
       "node_modules/yt-dlp-static/bin/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/whisper/runtime",
+        "to": "whisper/runtime"
+      },
+      {
+        "from": "vendor/whisper/models/ggml-small.bin",
+        "to": "whisper/models/ggml-small.bin"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
     ],
     "win": {
       "icon": "assets/app-icon.ico",

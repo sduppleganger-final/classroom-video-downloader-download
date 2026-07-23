@@ -13,6 +13,7 @@ const {
   extractSubtitleLanguages,
   findDownloadedSubtitleFile,
   normalizeSourceSubtitleSelection,
+  renderCaptionedVideo,
   srtToReadableText
 } = require("../src/sourceSubtitles");
 
@@ -281,6 +282,85 @@ test("bundled ffmpeg renders source subtitles centered in the upper third", asyn
 
   assert.ok(bounds.count > 100);
   assert.ok(bounds.minY >= 95 && bounds.minY <= 155, JSON.stringify(bounds));
+  assert.ok(
+    Math.abs((bounds.minX + bounds.maxX) / 2 - 320) <= 25,
+    JSON.stringify(bounds)
+  );
+});
+
+test("bundled ffmpeg renders Whisper captions at the bottom center", async (t) => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-bottom-caption-"));
+  const mediaPath = path.join(downloadsDir, "bottom-position.mp4");
+  const subtitlePath = path.join(downloadsDir, "bottom-position.en.srt");
+  const outputPath = path.join(downloadsDir, "bottom-position-captioned.mp4");
+
+  t.after(() => fs.rmSync(downloadsDir, { recursive: true, force: true }));
+
+  const fixtureResult = spawnSync(
+    ffmpeg,
+    [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=640x360:d=3",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      mediaPath
+    ],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(fixtureResult.status, 0, fixtureResult.stderr);
+  fs.writeFileSync(
+    subtitlePath,
+    "1\n00:00:00,200 --> 00:00:02,800\nBOTTOM CENTER\n",
+    "utf8"
+  );
+
+  await renderCaptionedVideo({
+    inputPath: mediaPath,
+    subtitlePath,
+    outputPath,
+    width: 640,
+    height: 360,
+    duration: 3,
+    captionPosition: "bottom-center",
+    ffmpegCommandParts: { command: ffmpeg, args: [] }
+  });
+
+  const frameResult = spawnSync(
+    ffmpeg,
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-ss",
+      "1",
+      "-i",
+      outputPath,
+      "-frames:v",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "gray",
+      "pipe:1"
+    ],
+    { encoding: null, maxBuffer: 640 * 360 * 2 }
+  );
+
+  assert.equal(frameResult.status, 0, frameResult.stderr?.toString());
+
+  const bounds = findLitPixelBounds(frameResult.stdout, 640, 360, 70);
+
+  assert.ok(bounds.count > 100);
+  assert.ok(bounds.minY >= 280 && bounds.maxY <= 345, JSON.stringify(bounds));
   assert.ok(
     Math.abs((bounds.minX + bounds.maxX) / 2 - 320) <= 25,
     JSON.stringify(bounds)

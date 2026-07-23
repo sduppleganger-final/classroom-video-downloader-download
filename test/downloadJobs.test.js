@@ -192,6 +192,67 @@ test("cleans up expired hosted job files when cleanup is enabled", async (t) => 
   assert.equal(fs.existsSync(sourcePath), false);
 });
 
+test("cancels active Whisper transcription and preserves the downloaded original", async (t) => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-jobs-"));
+  t.after(() => fs.rmSync(downloadsDir, { recursive: true, force: true }));
+  const originalPath = path.join(downloadsDir, "lecture-original.mp4");
+  const finalPath = path.join(downloadsDir, "final-copy.mp4");
+  const manager = createDownloadJobManager({
+    downloadsDir,
+    startCleanupTimer: false,
+    finalizeResult: async () => ({
+      savedFileName: path.basename(finalPath),
+      savedPath: finalPath,
+      artifacts: []
+    }),
+    downloadVideo: async (_url, _resolution, _jobDownloadsDir, options = {}) => {
+      fs.writeFileSync(originalPath, "original-video");
+      fs.writeFileSync(finalPath, "original-video");
+      options.onProgress?.({
+        percent: 68,
+        stage: "transcribing",
+        canCancel: true,
+        detectedLanguage: "en",
+        detectedLanguageName: "English",
+        estimatedSecondsRemaining: 120,
+        message: "Whisper is transcribing English."
+      });
+
+      await new Promise((resolve) => {
+        options.signal.addEventListener("abort", resolve, { once: true });
+      });
+
+      return {
+        cancelled: true,
+        fileName: path.basename(originalPath),
+        filePath: originalPath,
+        artifacts: []
+      };
+    }
+  });
+  const created = manager.createJob({
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    resolution: { label: "Best available" },
+    transcription: { mode: "whisper", saveOriginal: true }
+  });
+  const working = await waitForJobProgress(manager, created.id, 68);
+
+  assert.equal(working.canCancel, true);
+  assert.equal(working.detectedLanguageName, "English");
+  assert.equal(working.estimatedSecondsRemaining, 120);
+
+  const cancellation = manager.cancelJob(created.id);
+  assert.equal(cancellation.ok, true);
+
+  const cancelled = await waitForJobStatus(manager, created.id, "cancelled");
+  assert.equal(cancelled.fileName, "lecture-original.mp4");
+  assert.equal(cancelled.savedPath, finalPath);
+  assert.equal(cancelled.canCancel, false);
+  assert.match(cancelled.message, /has been kept/);
+  assert.match(cancelled.downloadUrl, /\/file\?token=/);
+  assert.equal(fs.readFileSync(originalPath, "utf8"), "original-video");
+});
+
 function waitForJobStatus(manager, jobId, expectedStatus) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 1000;

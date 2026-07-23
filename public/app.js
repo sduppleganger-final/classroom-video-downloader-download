@@ -5,10 +5,18 @@ const resolutionSelect = document.querySelector("#resolution");
 const accessCodeField = document.querySelector("#access-code-field");
 const accessCodeInput = document.querySelector("#access-code");
 const button = document.querySelector("#download-button");
-const sourceTranscriptionCheckbox = document.querySelector("#use-source-transcription");
+const transcriptionModeInputs = [
+  ...document.querySelectorAll('input[name="transcriptionMode"]')
+];
+const noTranscriptionRadio = document.querySelector("#transcription-none");
+const sourceTranscriptionCheckbox = document.querySelector("#transcription-source");
+const whisperTranscriptionRadio = document.querySelector("#transcription-whisper");
 const subtitleLanguageField = document.querySelector("#subtitle-language-field");
 const subtitleLanguageSelect = document.querySelector("#subtitle-language");
 const subtitleAvailability = document.querySelector("#subtitle-availability");
+const whisperOptions = document.querySelector("#whisper-options");
+const saveOriginalVideoCheckbox = document.querySelector("#save-original-video");
+const whisperEstimate = document.querySelector("#whisper-estimate");
 const previewPanel = document.querySelector(".preview-panel");
 const previewVideo = document.querySelector("#preview-video");
 const previewTitle = document.querySelector("#preview-title");
@@ -22,6 +30,7 @@ const downloadProgressTrack = document.querySelector(".download-progress-track")
 const downloadProgressBar = document.querySelector("#download-progress-bar");
 const downloadProgressPercent = document.querySelector("#download-progress-percent");
 const downloadProgressDetail = document.querySelector("#download-progress-detail");
+const cancelTranscriptionButton = document.querySelector("#cancel-transcription-button");
 const fileActions = document.querySelector("#file-actions");
 const openFileLocationButton = document.querySelector("#open-file-location-button");
 const diagnosticPanel = document.querySelector("#diagnostic-panel");
@@ -43,11 +52,15 @@ let currentDiagnosticFileName = "classroom-video-downloader-log.txt";
 let currentSubtitleLanguages = [];
 let subtitleDiscoveryState = "idle";
 let subtitlePreviewUrl = "";
+let currentPreviewDuration = null;
+let currentDownloadJobId = "";
+let cancellingTranscription = false;
 let appConfig = {
   hostedMode: false,
   accessCodeRequired: false,
   downloadMode: "direct",
-  canOpenFileLocation: false
+  canOpenFileLocation: false,
+  whisperAvailable: null
 };
 
 input.addEventListener("input", schedulePreview);
@@ -56,7 +69,10 @@ input.addEventListener("paste", () => {
 });
 resolutionSelect.addEventListener("change", schedulePreview);
 resolutionSelect.addEventListener("change", syncSourceTranscriptionForResolution);
-sourceTranscriptionCheckbox.addEventListener("change", handleSourceTranscriptionChange);
+transcriptionModeInputs.forEach((input) => {
+  input.addEventListener("change", handleTranscriptionModeChange);
+});
+cancelTranscriptionButton.addEventListener("click", cancelActiveTranscription);
 window.addEventListener("native-download-complete", (event) => {
   const fileName = event.detail?.fileName || "the file";
   const filePath = event.detail?.filePath;
@@ -82,10 +98,10 @@ syncSourceTranscriptionForResolution();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const sourceTranscription = getSourceTranscriptionRequest();
+  const transcription = getTranscriptionRequest();
 
-  if (!sourceTranscription.ok) {
-    setState("error", "Subtitle language needed", sourceTranscription.message);
+  if (!transcription.ok) {
+    setState("error", "Transcription option needed", transcription.message);
 
     if (!subtitleLanguageField.hidden) {
       subtitleLanguageSelect.focus();
@@ -108,8 +124,11 @@ form.addEventListener("submit", async (event) => {
   button.disabled = true;
   resolutionSelect.disabled = true;
   accessCodeInput.disabled = true;
-  sourceTranscriptionCheckbox.disabled = true;
+  transcriptionModeInputs.forEach((input) => {
+    input.disabled = true;
+  });
   subtitleLanguageSelect.disabled = true;
+  saveOriginalVideoCheckbox.disabled = true;
 
   try {
     const response = await fetchWithClassroomAccess(apiUrl("/api/download"), {
@@ -120,7 +139,7 @@ form.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         url: input.value,
         resolution: resolutionSelect.value,
-        sourceTranscription: sourceTranscription.value
+        transcription: transcription.value
       })
     });
 
@@ -148,6 +167,7 @@ form.addEventListener("submit", async (event) => {
     syncSourceTranscriptionForResolution();
     subtitleLanguageSelect.disabled =
       subtitleLanguageField.hidden || !sourceTranscriptionCheckbox.checked;
+    saveOriginalVideoCheckbox.disabled = !whisperTranscriptionRadio.checked;
   }
 });
 
@@ -171,6 +191,8 @@ async function loadConfig() {
     if (appConfig.hostedMode) {
       setState("idle", "Online", "Paste a supported video link to start a hosted download job.");
     }
+
+    syncSourceTranscriptionForResolution();
   } catch {
     // The app still works in local direct mode if config loading fails.
   }
@@ -185,20 +207,63 @@ function setState(state, label, message) {
 function syncSourceTranscriptionForResolution() {
   const isVideoDownload = resolutionSelect.value !== "mp3";
 
+  noTranscriptionRadio.disabled = button.disabled;
   sourceTranscriptionCheckbox.disabled = !isVideoDownload || button.disabled;
+  whisperTranscriptionRadio.disabled =
+    !isVideoDownload || appConfig.whisperAvailable === false || button.disabled;
 
   if (isVideoDownload) {
     if (!sourceTranscriptionCheckbox.checked && subtitleDiscoveryState === "audio") {
       subtitleAvailability.textContent = "";
       subtitleDiscoveryState = "idle";
     }
+    if (whisperTranscriptionRadio.checked && appConfig.whisperAvailable === false) {
+      noTranscriptionRadio.checked = true;
+    }
+    handleTranscriptionModeChange();
     return;
   }
 
-  sourceTranscriptionCheckbox.checked = false;
+  noTranscriptionRadio.checked = true;
   subtitleDiscoveryState = "audio";
-  subtitleAvailability.textContent = "Source transcription is available for video downloads only.";
+  subtitleAvailability.textContent = "Transcription is available for video downloads only.";
   hideSubtitleLanguageField();
+  whisperOptions.hidden = true;
+}
+
+function handleTranscriptionModeChange() {
+  whisperOptions.hidden = !whisperTranscriptionRadio.checked;
+  saveOriginalVideoCheckbox.disabled =
+    !whisperTranscriptionRadio.checked || button.disabled;
+
+  if (sourceTranscriptionCheckbox.checked) {
+    handleSourceTranscriptionChange();
+    return;
+  }
+
+  subtitleAvailability.textContent = "";
+  hideSubtitleLanguageField();
+
+  if (whisperTranscriptionRadio.checked) {
+    updateWhisperEstimate(currentPreviewDuration);
+  }
+}
+
+function updateWhisperEstimate(durationSeconds) {
+  const duration = Number(durationSeconds);
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    whisperEstimate.textContent = "Load a preview to estimate local transcription time.";
+    return;
+  }
+
+  const minimumSeconds = Math.max(30, Math.round(duration * 0.5));
+  const likelySeconds = Math.max(45, Math.round(duration));
+  const maximumSeconds = Math.max(60, Math.round(duration * 2));
+
+  whisperEstimate.textContent =
+    `Estimated transcription time on this computer: ${formatTimeSpan(minimumSeconds)}` +
+    ` to ${formatTimeSpan(maximumSeconds)} (often around ${formatTimeSpan(likelySeconds)}).`;
 }
 
 function handleSourceTranscriptionChange() {
@@ -234,14 +299,28 @@ function handleSourceTranscriptionChange() {
   schedulePreview();
 }
 
-function getSourceTranscriptionRequest() {
-  if (!sourceTranscriptionCheckbox.checked) {
+function getTranscriptionRequest() {
+  if (whisperTranscriptionRadio.checked) {
+    if (appConfig.whisperAvailable === false) {
+      return {
+        ok: false,
+        message: "The bundled Whisper runtime or Small model is not available in this app."
+      };
+    }
+
     return {
       ok: true,
       value: {
-        enabled: false,
-        language: ""
+        mode: "whisper",
+        saveOriginal: saveOriginalVideoCheckbox.checked
       }
+    };
+  }
+
+  if (!sourceTranscriptionCheckbox.checked) {
+    return {
+      ok: true,
+      value: { mode: "none" }
     };
   }
 
@@ -265,7 +344,7 @@ function getSourceTranscriptionRequest() {
   return {
     ok: true,
     value: {
-      enabled: true,
+      mode: "source",
       language: subtitleLanguageSelect.value
     }
   };
@@ -340,6 +419,10 @@ function failSubtitleDiscovery(message) {
 
 function startDownloadSession(detail) {
   window.clearInterval(progressTimer);
+  currentDownloadJobId = "";
+  cancellingTranscription = false;
+  cancelTranscriptionButton.hidden = true;
+  cancelTranscriptionButton.disabled = false;
   currentProgressPercent = 6;
   downloadSession.hidden = false;
   downloadSession.dataset.state = "working";
@@ -371,6 +454,10 @@ function updateDownloadProgress(percent, detail) {
 function finishDownloadSession(detail) {
   window.clearInterval(progressTimer);
   progressTimer = undefined;
+  currentDownloadJobId = "";
+  cancellingTranscription = false;
+  cancelTranscriptionButton.hidden = true;
+  cancelTranscriptionButton.disabled = false;
   downloadSession.dataset.state = "complete";
   updateDownloadProgress(100, detail || "Download complete.");
 }
@@ -378,6 +465,10 @@ function finishDownloadSession(detail) {
 function stopDownloadSession() {
   window.clearInterval(progressTimer);
   progressTimer = undefined;
+  currentDownloadJobId = "";
+  cancellingTranscription = false;
+  cancelTranscriptionButton.hidden = true;
+  cancelTranscriptionButton.disabled = false;
   downloadSession.dataset.state = "idle";
   downloadSession.hidden = true;
   currentProgressPercent = 0;
@@ -470,6 +561,10 @@ function showPreview(payload) {
   previewVideo.currentTime = 0;
   previewVideo.muted = true;
 
+  currentPreviewDuration = Number.isFinite(Number(payload.duration))
+    ? Number(payload.duration)
+    : null;
+  updateWhisperEstimate(currentPreviewDuration);
   const duration = formatDuration(payload.duration);
   const meta = [payload.resolutionLabel, duration].filter(Boolean).join(" | ");
 
@@ -516,6 +611,8 @@ function resetPreview(title, message) {
   previewVideo.load();
   currentSubtitleLanguages = [];
   subtitlePreviewUrl = "";
+  currentPreviewDuration = null;
+  updateWhisperEstimate(null);
 
   if (sourceTranscriptionCheckbox.checked) {
     subtitleDiscoveryState = "waiting";
@@ -547,11 +644,37 @@ function formatDuration(seconds) {
   return `${minutes}:${remainingSeconds}`;
 }
 
+function formatTimeSpan(seconds) {
+  const totalSeconds = Math.max(1, Math.round(Number(seconds)));
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds} second${totalSeconds === 1 ? "" : "s"}`;
+  }
+
+  const totalMinutes = Math.max(1, Math.round(totalSeconds / 60));
+
+  if (totalMinutes < 60) {
+    return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return minutes
+    ? `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`
+    : `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
 async function waitForDownloadJob(payload) {
   const statusUrl = apiUrl(
     payload.statusUrl || `/api/downloads/${encodeURIComponent(payload.jobId)}`
   );
 
+  window.clearInterval(progressTimer);
+  progressTimer = undefined;
+  currentDownloadJobId = payload.jobId;
+  cancellingTranscription = false;
+  cancelTranscriptionButton.hidden = true;
   setState("loading", "Queued", payload.message || "The download is waiting to start.");
   updateDownloadProgress(payload.progressPercent || 8, payload.message || "Waiting for the next download slot.");
 
@@ -566,30 +689,56 @@ async function waitForDownloadJob(payload) {
     }
 
     if (job.status === "queued") {
+      syncCancelTranscriptionButton(job);
       setState("loading", "Queued", job.message || "Waiting for the next download slot.");
       updateDownloadProgress(job.progressPercent || 8, job.message || "Waiting for the next download slot.");
       continue;
     }
 
     if (job.status === "working") {
-      setState("loading", "Downloading", job.message || "The hosted server is downloading it.");
+      syncCancelTranscriptionButton(job);
+      const statusTitle = getProgressStageTitle(job.progressStage);
+      const languageNotice = job.detectedLanguageName
+        ? ` Detected language: ${job.detectedLanguageName}.`
+        : "";
+      const estimateNotice = Number.isFinite(Number(job.estimatedSecondsRemaining))
+        ? ` Estimated time remaining: ${formatTimeSpan(job.estimatedSecondsRemaining)}.`
+        : "";
+      const message = `${job.message || "The download is being processed."}${languageNotice}${estimateNotice}`;
+
+      setState("loading", statusTitle, message);
       updateDownloadProgress(
         job.progressPercent || currentProgressPercent,
-        job.message || "The hosted server is downloading it."
+        message
       );
       continue;
     }
 
     if (job.status === "complete") {
       finishDownloadSession("Download ready.");
-      startAutomaticDownload({
+      const completedPayload = {
         fileName: job.fileName,
+        savedFileName: job.savedFileName,
+        savedPath: job.savedPath,
         downloadUrl: job.downloadUrl,
         artifacts: job.artifacts,
         resolutionLabel: job.resolutionLabel,
         actualResolutionLabel: job.actualResolutionLabel,
-        adjustmentMessage: job.adjustmentMessage
-      });
+        adjustmentMessage: job.adjustmentMessage,
+        detectedLanguage: job.detectedLanguage,
+        detectedLanguageName: job.detectedLanguageName
+      };
+
+      if (job.savedPath) {
+        showDownloadSaved(completedPayload);
+      } else {
+        startAutomaticDownload(completedPayload);
+      }
+      return;
+    }
+
+    if (job.status === "cancelled") {
+      handleCancelledDownloadJob(job);
       return;
     }
 
@@ -599,6 +748,108 @@ async function waitForDownloadJob(payload) {
 
     throw new Error("The hosted download job returned an unknown state.");
   }
+}
+
+function syncCancelTranscriptionButton(job) {
+  const canCancel = job?.status === "working" && job.canCancel === true;
+
+  cancelTranscriptionButton.hidden = !canCancel;
+  cancelTranscriptionButton.disabled = !canCancel || cancellingTranscription;
+  cancelTranscriptionButton.textContent = cancellingTranscription
+    ? "Cancelling..."
+    : "Cancel transcription";
+}
+
+async function cancelActiveTranscription() {
+  if (!currentDownloadJobId || cancellingTranscription) {
+    return;
+  }
+
+  cancellingTranscription = true;
+  cancelTranscriptionButton.disabled = true;
+  cancelTranscriptionButton.textContent = "Cancelling...";
+  setState(
+    "loading",
+    "Cancelling",
+    "Stopping local transcription. The downloaded non-captioned video will be kept."
+  );
+
+  try {
+    const response = await fetchWithClassroomAccess(
+      apiUrl(`/api/downloads/${encodeURIComponent(currentDownloadJobId)}/cancel`),
+      { method: "POST" }
+    );
+    const cancelPayload = await response.json();
+
+    if (!response.ok) {
+      throw createPayloadError(cancelPayload, "Transcription could not be cancelled.");
+    }
+
+    updateDownloadProgress(
+      cancelPayload.progressPercent || currentProgressPercent,
+      cancelPayload.message || "Stopping transcription and preserving the original video."
+    );
+  } catch (error) {
+    cancellingTranscription = false;
+    cancelTranscriptionButton.disabled = false;
+    cancelTranscriptionButton.textContent = "Cancel transcription";
+    setState("error", "Could not cancel", error.message);
+  }
+}
+
+function handleCancelledDownloadJob(job) {
+  const cancelledPayload = {
+    fileName: job.fileName,
+    savedFileName: job.savedFileName,
+    savedPath: job.savedPath,
+    downloadUrl: job.downloadUrl,
+    artifacts: [],
+    resolutionLabel: job.resolutionLabel,
+    actualResolutionLabel: job.actualResolutionLabel,
+    adjustmentMessage: job.adjustmentMessage
+  };
+
+  if (!job.fileName || (!job.savedPath && !job.downloadUrl)) {
+    stopDownloadSession();
+    setState("idle", "Cancelled", job.message || "The operation was cancelled.");
+    return;
+  }
+
+  if (job.savedPath) {
+    showDownloadSaved(cancelledPayload, {
+      label: "Transcription cancelled",
+      detail: "The non-captioned video was kept."
+    });
+    return;
+  }
+
+  finishDownloadSession("Transcription cancelled. Saving the non-captioned video.");
+  triggerBrowserDownload(apiUrl(job.downloadUrl), job.fileName);
+  setState(
+    "success",
+    "Transcription cancelled",
+    `${job.fileName} is being downloaded without captions.`
+  );
+}
+
+function getProgressStageTitle(stage) {
+  if (stage === "preparing-transcription") {
+    return "Preparing transcription";
+  }
+
+  if (stage === "transcribing") {
+    return "Transcribing";
+  }
+
+  if (stage === "rendering-transcription") {
+    return "Adding captions";
+  }
+
+  if (stage === "finalizing") {
+    return "Finalizing";
+  }
+
+  return "Downloading";
 }
 
 function createPayloadError(payload = {}, fallbackMessage) {
@@ -673,19 +924,17 @@ function clearDiagnosticLog() {
   currentDiagnosticFileName = "classroom-video-downloader-log.txt";
 }
 
-function showDownloadSaved(payload) {
+function showDownloadSaved(payload, options = {}) {
   const fileName = payload.savedFileName || payload.fileName || "The file";
   const notice = payload.adjustmentMessage ? `${payload.adjustmentMessage} ` : "";
-  const artifactCount = Array.isArray(payload.artifacts) ? payload.artifacts.length : 0;
-  const artifactNotice = artifactCount
-    ? ` The SRT subtitles and readable TXT transcript were saved alongside it.`
-    : "";
+  const artifactNotice = buildArtifactNotice(payload.artifacts, "saved");
+  const extraDetail = options.detail ? ` ${options.detail}` : "";
 
   finishDownloadSession("Saved to your computer.");
   setState(
     "success",
-    "Saved",
-    `${notice}${fileName} has been saved to ${payload.savedPath}.${artifactNotice}`
+    options.label || "Saved",
+    `${notice}${fileName} has been saved to ${payload.savedPath}.${artifactNotice}${extraDetail}`
   );
   showFileLocationAction(payload.savedPath);
 }
@@ -748,14 +997,43 @@ function startAutomaticDownload(payload) {
     }, 750 * (index + 1));
   });
 
-  const artifactNotice = artifacts.length
-    ? " The SRT subtitles and TXT transcript will follow."
-    : "";
+  const artifactNotice = buildArtifactNotice(artifacts, "downloaded");
   setState(
     "success",
     "Downloading",
     `${notice}${payload.fileName} is being downloaded automatically (${resolutionLabel}).${artifactNotice}`
   );
+}
+
+function buildArtifactNotice(artifacts, action) {
+  const kinds = new Set(
+    (Array.isArray(artifacts) ? artifacts : []).map((artifact) => artifact.kind || artifact.id)
+  );
+  const items = [];
+
+  if (kinds.has("subtitles")) {
+    items.push("SRT subtitles");
+  }
+  if (kinds.has("transcript")) {
+    items.push("TXT transcript");
+  }
+  if (kinds.has("original-video")) {
+    items.push("non-captioned video");
+  }
+
+  if (!items.length) {
+    return "";
+  }
+
+  const joined = items.length === 1
+    ? items[0]
+    : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
+  if (action === "saved") {
+    return ` The ${joined} ${items.length === 1 ? "was" : "were"} saved alongside it.`;
+  }
+
+  return ` The ${joined} will follow.`;
 }
 
 function triggerBrowserDownload(url, fileName) {

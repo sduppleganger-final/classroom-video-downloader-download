@@ -398,6 +398,135 @@ console.log("__CVD_HEIGHT__720");
   }
 });
 
+test("hands a downloaded video to Whisper and returns its captioned artifacts", async () => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-whisper-"));
+  const fakeExtractor = path.join(downloadsDir, "fake-whisper-extractor.js");
+  const originalPath = path.join(downloadsDir, "lecture original.mp4");
+  const resolution = {
+    downloadType: "video",
+    format: "best",
+    label: "Best available",
+    value: "best"
+  };
+  let receivedWhisperOptions;
+
+  fs.writeFileSync(
+    fakeExtractor,
+    `
+const fs = require("fs");
+const outputPath = ${JSON.stringify(originalPath)};
+fs.writeFileSync(outputPath, "original-video");
+console.log("__CVD_FILE__" + outputPath);
+console.log("__CVD_WIDTH__1280");
+console.log("__CVD_HEIGHT__720");
+console.log("__CVD_DURATION__120");
+`
+  );
+
+  try {
+    const result = await downloadVideo("https://example.com/watch", resolution, downloadsDir, {
+      transcription: { mode: "whisper", language: "auto", saveOriginal: false },
+      whisperAvailable: true,
+      commandCandidates: [
+        {
+          command: process.execPath,
+          args: [
+            fakeExtractor,
+            ...buildDownloadArgs("https://example.com/watch", resolution, downloadsDir)
+          ],
+          label: "fake Whisper extractor"
+        }
+      ],
+      createWhisperArtifacts: async (options) => {
+        receivedWhisperOptions = options;
+        const captionedPath = path.join(downloadsDir, "lecture captioned.mp4");
+        const subtitlePath = path.join(downloadsDir, "lecture.en.srt");
+        const transcriptPath = path.join(downloadsDir, "lecture.en.txt");
+
+        fs.writeFileSync(captionedPath, "captioned-video");
+        fs.writeFileSync(subtitlePath, "subtitles");
+        fs.writeFileSync(transcriptPath, "transcript");
+
+        return {
+          fileName: path.basename(captionedPath),
+          filePath: captionedPath,
+          detectedLanguage: "en",
+          detectedLanguageName: "English",
+          artifacts: [
+            { id: "subtitles", kind: "subtitles", filePath: subtitlePath },
+            { id: "transcript", kind: "transcript", filePath: transcriptPath }
+          ]
+        };
+      }
+    });
+
+    assert.equal(receivedWhisperOptions.mediaPath, originalPath);
+    assert.equal(receivedWhisperOptions.duration, 120);
+    assert.equal(receivedWhisperOptions.saveOriginal, false);
+    assert.equal(result.fileName, "lecture captioned.mp4");
+    assert.equal(result.detectedLanguageName, "English");
+    assert.deepEqual(result.artifacts.map((artifact) => artifact.id), [
+      "subtitles",
+      "transcript"
+    ]);
+  } finally {
+    fs.rmSync(downloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("preserves the downloaded original when Whisper is cancelled", async () => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-whisper-cancel-"));
+  const fakeExtractor = path.join(downloadsDir, "fake-cancel-extractor.js");
+  const originalPath = path.join(downloadsDir, "cancelled original.mp4");
+  const resolution = {
+    downloadType: "video",
+    format: "best",
+    label: "Best available",
+    value: "best"
+  };
+
+  fs.writeFileSync(
+    fakeExtractor,
+    `
+const fs = require("fs");
+const outputPath = ${JSON.stringify(originalPath)};
+fs.writeFileSync(outputPath, "original-video");
+console.log("__CVD_FILE__" + outputPath);
+console.log("__CVD_WIDTH__1280");
+console.log("__CVD_HEIGHT__720");
+console.log("__CVD_DURATION__120");
+`
+  );
+
+  try {
+    const result = await downloadVideo("https://example.com/watch", resolution, downloadsDir, {
+      transcription: { mode: "whisper", language: "auto", saveOriginal: true },
+      whisperAvailable: true,
+      commandCandidates: [
+        {
+          command: process.execPath,
+          args: [
+            fakeExtractor,
+            ...buildDownloadArgs("https://example.com/watch", resolution, downloadsDir)
+          ],
+          label: "fake cancellation extractor"
+        }
+      ],
+      createWhisperArtifacts: async () => {
+        throw { cancelled: true };
+      }
+    });
+
+    assert.equal(result.cancelled, true);
+    assert.equal(result.fileName, path.basename(originalPath));
+    assert.equal(result.filePath, originalPath);
+    assert.deepEqual(result.artifacts, []);
+    assert.equal(fs.readFileSync(originalPath, "utf8"), "original-video");
+  } finally {
+    fs.rmSync(downloadsDir, { recursive: true, force: true });
+  }
+});
+
 test("resolves the final MP3 when yt-dlp reports a pre-conversion path", () => {
   const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-downloads-"));
 

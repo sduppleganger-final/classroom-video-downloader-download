@@ -1,0 +1,24 @@
+# Third-Party Notices
+
+Classroom Video Downloader includes the following bundled components.
+
+## whisper.cpp
+
+Copyright (c) 2023-2026 The ggml authors.
+
+Licensed under the MIT License. Source: https://github.com/ggml-org/whisper.cpp
+
+## Whisper Small model
+
+The multilingual Whisper Small model is derived from OpenAI Whisper and is used
+locally by whisper.cpp. OpenAI Whisper is licensed under the MIT License.
+Source: https://github.com/openai/whisper
+
+## yt-dlp
+
+Licensed under The Unlicense. Source: https://github.com/yt-dlp/yt-dlp
+
+## FFmpeg
+
+FFmpeg is distributed under its applicable LGPL/GPL terms.
+Source: https://ffmpeg.org/

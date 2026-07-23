@@ -354,15 +354,24 @@ function renderCaptionedVideo(options) {
     duration,
     onProgress,
     spawnImpl = spawn,
-    timeoutMs = 2 * 60 * 60 * 1000
+    timeoutMs = 2 * 60 * 60 * 1000,
+    signal,
+    captionPosition = "upper-third",
+    progressStart = 96,
+    progressEnd = 99,
+    progressStage = "subtitles",
+    progressMessage = "Rendering subtitles into the video",
+    completionMessage = "Finalizing the captioned video and transcript files."
   } = options;
   const commandParts = options.ffmpegCommandParts || {
     command: "ffmpeg",
     args: []
   };
-  const marginV = 96;
+  const isBottomCenter = captionPosition === "bottom-center";
+  const alignment = isBottomCenter ? 2 : 6;
+  const marginV = isBottomCenter ? 24 : 96;
   const fontSize = 18;
-  const filter = buildSubtitleFilter(subtitlePath, { marginV, fontSize });
+  const filter = buildSubtitleFilter(subtitlePath, { alignment, marginV, fontSize });
   const args = [
     ...(Array.isArray(commandParts.args) ? commandParts.args : []),
     "-y",
@@ -396,22 +405,42 @@ function renderCaptionedVideo(options) {
   ];
 
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createCancelledSubtitleError());
+      return;
+    }
+
     const child = spawnImpl(commandParts.command, args, { windowsHide: true });
     let stdoutBuffer = "";
     let stderr = "";
     let startupFailed = false;
     let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
+    let aborted = false;
+    const abort = () => {
+      aborted = true;
       child.kill();
-    }, timeoutMs);
+    };
+    const timeout = Number(timeoutMs) > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill();
+        }, timeoutMs)
+      : null;
+
+    signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.on("data", (chunk) => {
       stdoutBuffer = reportFfmpegProgress(
         chunk.toString(),
         stdoutBuffer,
         duration,
-        onProgress
+        onProgress,
+        {
+          progressStart,
+          progressEnd,
+          progressStage,
+          progressMessage
+        }
       );
     });
 
@@ -421,7 +450,10 @@ function renderCaptionedVideo(options) {
 
     child.on("error", (error) => {
       startupFailed = true;
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      signal?.removeEventListener("abort", abort);
       reject(
         createSourceSubtitleError(
           "The bundled caption renderer could not start.",
@@ -431,9 +463,17 @@ function renderCaptionedVideo(options) {
     });
 
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      signal?.removeEventListener("abort", abort);
 
       if (startupFailed) {
+        return;
+      }
+
+      if (aborted) {
+        reject(createCancelledSubtitleError());
         return;
       }
 
@@ -459,19 +499,22 @@ function renderCaptionedVideo(options) {
       }
 
       reportProgress(onProgress, {
-        percent: 99,
-        stage: "subtitles",
-        message: "Finalizing the captioned video and transcript files."
+        percent: progressEnd,
+        stage: progressStage,
+        message: completionMessage
       });
       resolve({ commandParts: { command: commandParts.command, args }, stderr });
     });
   });
 }
 
-function buildSubtitleFilter(subtitlePath, { marginV, fontSize }) {
+function buildSubtitleFilter(
+  subtitlePath,
+  { alignment = 6, marginV = 96, fontSize = 18 } = {}
+) {
   const escapedPath = escapeFfmpegFilterPath(subtitlePath);
   const style = [
-    "Alignment=6",
+    `Alignment=${alignment}`,
     `MarginV=${marginV}`,
     `FontSize=${fontSize}`,
     "Outline=2",
@@ -493,10 +536,19 @@ function escapeFfmpegFilterPath(filePath) {
     .replace(/;/g, "\\;");
 }
 
-function reportFfmpegProgress(text, previousBuffer, duration, onProgress) {
+function reportFfmpegProgress(
+  text,
+  previousBuffer,
+  duration,
+  onProgress,
+  options = {}
+) {
   const lines = `${previousBuffer}${text}`.split(/\r?\n/);
   const nextBuffer = lines.pop() || "";
   const durationSeconds = Number(duration);
+  const progressStart = Number(options.progressStart) || 96;
+  const progressEnd = Number(options.progressEnd) || 99;
+  const progressSpan = Math.max(0, progressEnd - progressStart);
 
   if (!onProgress || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     return nextBuffer;
@@ -510,12 +562,13 @@ function reportFfmpegProgress(text, previousBuffer, duration, onProgress) {
     }
 
     const renderedSeconds = Number(match[1]) / 1_000_000;
-    const percent = 96 + Math.min(3, (renderedSeconds / durationSeconds) * 3);
+    const renderedPercent = Math.min(100, (renderedSeconds / durationSeconds) * 100);
+    const percent = progressStart + (renderedPercent / 100) * progressSpan;
 
     reportProgress(onProgress, {
       percent,
-      stage: "subtitles",
-      message: `Rendering subtitles into the video (${Math.min(100, Math.round((renderedSeconds / durationSeconds) * 100))}%).`
+      stage: options.progressStage || "subtitles",
+      message: `${options.progressMessage || "Rendering subtitles into the video"} (${Math.round(renderedPercent)}%).`
     });
   }
 
@@ -543,6 +596,15 @@ function createSourceSubtitleError(userMessage, details = {}) {
   const error = new Error(userMessage);
 
   return Object.assign(error, details, { userMessage });
+}
+
+function createCancelledSubtitleError() {
+  const error = createSourceSubtitleError(
+    "Transcription was cancelled. The non-captioned video has been kept."
+  );
+
+  error.cancelled = true;
+  return error;
 }
 
 function reportProgress(onProgress, progress) {

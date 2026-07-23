@@ -13,9 +13,19 @@ const { resolvePackagedBinaryPath } = require("./src/binaryPath");
 const { getAvailableDownloadPath } = require("./electron/downloadPath");
 const {
   buildSourceSubtitleArgs,
-  createSourceSubtitleArtifacts,
-  normalizeSourceSubtitleSelection
+  createSourceSubtitleArtifacts
 } = require("./src/sourceSubtitles");
+const {
+  isWhisperTranscription,
+  normalizeTranscriptionSelection,
+  toSourceSubtitleSelection
+} = require("./src/transcriptionOptions");
+const { createWhisperArtifacts } = require("./src/whisperTranscription");
+const {
+  getWhisperCommandParts,
+  getWhisperStatus,
+  hasWhisper
+} = require("./src/whisperPaths");
 const {
   getBundledYtDlpPath,
   getYtDlpCommandCandidates,
@@ -49,6 +59,7 @@ function createApp(options = {}) {
     options.accessCode ?? process.env.CLASSROOM_ACCESS_CODE
   );
   const runDownload = options.downloadVideo || downloadVideo;
+  const whisperStatus = options.whisperStatus || getWhisperStatus();
   const downloadJobs =
     options.downloadJobs ||
     createDownloadJobManager({
@@ -58,6 +69,15 @@ function createApp(options = {}) {
       cleanupIntervalMs: options.cleanupIntervalMs ?? process.env.DOWNLOAD_CLEANUP_INTERVAL_MS,
       cleanupFiles: options.cleanupFiles ?? hostedMode,
       maxConcurrentJobs: options.maxConcurrentJobs ?? process.env.DOWNLOAD_MAX_CONCURRENT_JOBS,
+      finalizeResult:
+        finalDownloadsDir
+          ? (result) =>
+              saveCompletedResultToFinalDirectory({
+                result,
+                downloadsDir,
+                finalDownloadsDir
+              })
+          : null,
       startCleanupTimer: options.startCleanupTimer
     });
 
@@ -87,7 +107,10 @@ function createApp(options = {}) {
       hostedMode,
       accessCodeRequired: accessControl.required,
       downloadMode: hostedMode ? "job" : "direct",
-      canOpenFileLocation
+      canOpenFileLocation,
+      whisperAvailable: whisperStatus.available,
+      whisperModel: "Small multilingual",
+      whisperModelSize: whisperStatus.modelSize || null
     });
   });
 
@@ -171,21 +194,33 @@ function createApp(options = {}) {
       return;
     }
 
-    const sourceSubtitle = normalizeSourceSubtitleSelection(
-      request.body?.sourceTranscription,
-      resolution
+    const transcription = normalizeTranscriptionSelection(
+      request.body?.transcription,
+      resolution,
+      request.body?.sourceTranscription
     );
 
-    if (!sourceSubtitle.ok) {
-      response.status(400).json({ error: sourceSubtitle.message });
+    if (!transcription.ok) {
+      response.status(400).json({ error: transcription.message });
       return;
     }
 
-    if (hostedMode) {
+    if (isWhisperTranscription(transcription.value) && !whisperStatus.available) {
+      response.status(500).json({
+        error:
+          "The bundled Whisper Small runtime or model is missing. Reinstall version 1.0.5 and try again."
+      });
+      return;
+    }
+
+    const sourceSubtitle = toSourceSubtitleSelection(transcription.value);
+
+    if (hostedMode || isWhisperTranscription(transcription.value)) {
       const job = downloadJobs.createJob({
         url: parsed.normalizedUrl,
         resolution,
-        sourceSubtitle: sourceSubtitle.value
+        transcription: transcription.value,
+        sourceSubtitle
       });
 
       response.status(202).json({
@@ -201,7 +236,8 @@ function createApp(options = {}) {
 
     try {
       const result = await runDownload(parsed.normalizedUrl, resolution, downloadsDir, {
-        sourceSubtitle: sourceSubtitle.value
+        transcription: transcription.value,
+        sourceSubtitle
       });
       const completedFileName = result.filePath
         ? path.basename(result.filePath)
@@ -222,6 +258,11 @@ function createApp(options = {}) {
         actualResolutionLabel: result.actualResolutionLabel || null,
         adjustmentMessage: result.adjustmentMessage || null
       };
+
+      if (result.detectedLanguage) {
+        payload.detectedLanguage = result.detectedLanguage;
+        payload.detectedLanguageName = result.detectedLanguageName || null;
+      }
 
       if (finalDownloadsDir) {
         const savedDownload = await saveDirectDownloadToFinalDirectory({
@@ -274,6 +315,17 @@ function createApp(options = {}) {
     response.json(job);
   });
 
+  app.post("/api/downloads/:jobId/cancel", (request, response) => {
+    const result = downloadJobs.cancelJob(request.params.jobId);
+
+    if (!result.ok) {
+      response.status(result.statusCode || 409).json({ error: result.message });
+      return;
+    }
+
+    response.json(result.job);
+  });
+
   app.get("/api/downloads/:jobId/file", (request, response) => {
     const job = downloadJobs.getJob(request.params.jobId);
 
@@ -282,7 +334,7 @@ function createApp(options = {}) {
       return;
     }
 
-    if (job.status !== "complete") {
+    if (!isDownloadReadyJob(job)) {
       response.status(409).json({ error: "The download is not ready yet." });
       return;
     }
@@ -323,7 +375,7 @@ function sendDownloadFile(request, response, downloadJobs) {
     return;
   }
 
-  if (job.status !== "complete") {
+  if (!isDownloadReadyJob(job)) {
     response.status(409).json({ error: "The download is not ready yet." });
     return;
   }
@@ -439,6 +491,52 @@ async function saveDirectDownloadToFinalDirectory({
   }
 }
 
+async function saveCompletedResultToFinalDirectory({
+  result,
+  downloadsDir,
+  finalDownloadsDir
+}) {
+  const completedFileName = result.filePath
+    ? path.basename(result.filePath)
+    : result.fileName;
+  const savedDownload = await saveDirectDownloadToFinalDirectory({
+    downloadsDir,
+    finalDownloadsDir,
+    fileName: completedFileName,
+    sourceFilePath: result.filePath
+  });
+  const artifacts = normalizeDownloadArtifacts(result.artifacts, downloadsDir);
+  const savedArtifacts = await Promise.all(
+    artifacts.map(async (artifact) => {
+      const savedArtifact = await saveDirectDownloadToFinalDirectory({
+        downloadsDir,
+        finalDownloadsDir,
+        fileName: artifact.fileName,
+        sourceFilePath: artifact.filePath
+      });
+
+      return {
+        id: artifact.id,
+        kind: artifact.kind,
+        savedFileName: savedArtifact.fileName,
+        savedPath: savedArtifact.filePath
+      };
+    })
+  );
+
+  return {
+    savedFileName: savedDownload.fileName,
+    savedPath: savedDownload.filePath,
+    artifacts: savedArtifacts
+  };
+}
+
+function isDownloadReadyJob(job) {
+  return Boolean(
+    job?.fileName && (job.status === "complete" || job.status === "cancelled")
+  );
+}
+
 function normalizeDownloadArtifacts(artifacts, downloadsDir) {
   if (!Array.isArray(artifacts)) {
     return [];
@@ -545,14 +643,37 @@ function downloadVideo(
   return new Promise((resolve, reject) => {
     const startedAtMs = Date.now();
     const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+    const signal = options.signal;
+    const transcription = options.transcription || {
+      mode: options.sourceSubtitle?.enabled ? "source" : "none",
+      language: options.sourceSubtitle?.language || "",
+      saveOriginal: false
+    };
+    const whisperEnabled = isWhisperTranscription(transcription);
     const sourceSubtitle = options.sourceSubtitle?.enabled
       ? options.sourceSubtitle
       : { enabled: false, language: "" };
+    const extractorProgress = whisperEnabled
+      ? (progress) => {
+          const sourcePercent = Number(progress?.percent);
+          reportDownloadProgress(onProgress, {
+            ...progress,
+            percent: Number.isFinite(sourcePercent)
+              ? 5 + (Math.max(0, Math.min(100, sourcePercent)) / 100) * 49
+              : 10
+          });
+        }
+      : onProgress;
 
-    if ((resolution.downloadType === "audio" || sourceSubtitle.enabled) && !hasFfmpeg()) {
-      const userMessage = sourceSubtitle.enabled
-        ? "Adding source subtitles needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it."
-        : "MP3 conversion needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it.";
+    if (
+      (resolution.downloadType === "audio" || sourceSubtitle.enabled || whisperEnabled) &&
+      !hasFfmpeg()
+    ) {
+      const userMessage = whisperEnabled
+        ? "Whisper transcription needs the app's bundled ffmpeg, but it could not be started. Reinstall the portable app and try again."
+        : sourceSubtitle.enabled
+          ? "Adding source subtitles needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it."
+          : "MP3 conversion needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it.";
 
       reject({
         statusCode: 500,
@@ -567,6 +688,30 @@ function downloadVideo(
             command: getFfmpegCheckCommand(),
             args: ["-version"]
           }
+        })
+      });
+      return;
+    }
+
+    if (
+      whisperEnabled &&
+      !(options.whisperAvailable ?? hasWhisper())
+    ) {
+      const whisperCommandParts = options.whisperCommandParts || getWhisperCommandParts();
+      const userMessage =
+        "The bundled Whisper Small runtime or model is missing. Reinstall version 1.0.5 and try again.";
+
+      reject({
+        statusCode: 500,
+        userMessage,
+        diagnosticLog: createFailureDiagnostic({
+          operation: "Whisper startup check",
+          userMessage,
+          url,
+          resolution,
+          downloadsDir,
+          commandParts: whisperCommandParts,
+          extra: { modelPath: whisperCommandParts.modelPath }
         })
       });
       return;
@@ -590,6 +735,11 @@ function downloadVideo(
     startDownloadAttempt(0);
 
     function startDownloadAttempt(candidateIndex) {
+      if (signal?.aborted) {
+        finish(reject, createCancelledDownloadError());
+        return;
+      }
+
       const commandParts = commandCandidates[candidateIndex] || getYtDlpCommandParts(downloadArgs);
       const child = spawn(commandParts.command, commandParts.args, {
         windowsHide: true
@@ -600,6 +750,12 @@ function downloadVideo(
       let stdoutProgressBuffer = "";
       let stderrProgressBuffer = "";
       let startupFailed = false;
+      let aborted = false;
+      const abort = () => {
+        aborted = true;
+        child.kill();
+      };
+      signal?.addEventListener("abort", abort, { once: true });
       const timeout = timeoutMs
         ? setTimeout(() => {
             child.kill();
@@ -630,14 +786,22 @@ function downloadVideo(
         const text = chunk.toString();
 
         stdout += text;
-        stdoutProgressBuffer = reportYtDlpProgress(text, stdoutProgressBuffer, onProgress);
+        stdoutProgressBuffer = reportYtDlpProgress(
+          text,
+          stdoutProgressBuffer,
+          extractorProgress
+        );
       });
 
       child.stderr.on("data", (chunk) => {
         const text = chunk.toString();
 
         stderr += text;
-        stderrProgressBuffer = reportYtDlpProgress(text, stderrProgressBuffer, onProgress);
+        stderrProgressBuffer = reportYtDlpProgress(
+          text,
+          stderrProgressBuffer,
+          extractorProgress
+        );
       });
 
       child.on("error", (error) => {
@@ -645,6 +809,12 @@ function downloadVideo(
 
         if (timeout) {
           clearTimeout(timeout);
+        }
+        signal?.removeEventListener("abort", abort);
+
+        if (aborted) {
+          finish(reject, createCancelledDownloadError());
+          return;
         }
 
         startupFailures.push(describeStartupFailure(commandParts, error));
@@ -686,8 +856,14 @@ function downloadVideo(
         if (timeout) {
           clearTimeout(timeout);
         }
+        signal?.removeEventListener("abort", abort);
 
         if (settled || startupFailed) {
+          return;
+        }
+
+        if (aborted) {
+          finish(reject, createCancelledDownloadError());
           return;
         }
 
@@ -729,11 +905,13 @@ function downloadVideo(
         }
 
         reportDownloadProgress(onProgress, {
-          percent: sourceSubtitle.enabled ? 94 : 96,
+          percent: whisperEnabled ? 54 : sourceSubtitle.enabled ? 94 : 96,
           stage: "finalizing",
-          message: sourceSubtitle.enabled
-            ? "Preparing the downloaded video for source subtitles."
-            : "Finalizing the downloaded file."
+          message: whisperEnabled
+            ? "The original video is downloaded. Preparing local transcription."
+            : sourceSubtitle.enabled
+              ? "Preparing the downloaded video for source subtitles."
+              : "Finalizing the downloaded file."
         });
 
         const printedOutput = parseYtDlpPrintOutput(stdout);
@@ -809,6 +987,71 @@ function downloadVideo(
           adjustmentMessage: buildResolutionAdjustmentMessage(resolution, printedOutput)
         };
 
+        if (whisperEnabled) {
+          try {
+            const whisperResult = await (
+              options.createWhisperArtifacts || createWhisperArtifacts
+            )({
+              downloadsDir,
+              mediaPath: resolvedPath,
+              width: printedOutput.width,
+              height: printedOutput.height,
+              duration: printedOutput.duration,
+              saveOriginal: transcription.saveOriginal !== false,
+              signal,
+              ffmpegCommandParts: options.ffmpegCommandParts || {
+                command: getFfmpegCheckCommand(),
+                args: []
+              },
+              whisperCommandParts:
+                options.whisperCommandParts || getWhisperCommandParts(),
+              onProgress
+            });
+
+            Object.assign(result, whisperResult);
+          } catch (error) {
+            if (error?.cancelled || signal?.aborted) {
+              finish(resolve, {
+                ...result,
+                cancelled: true,
+                fileName: path.basename(resolvedPath),
+                filePath: resolvedPath,
+                artifacts: [],
+                cleanupFilePaths: []
+              });
+              return;
+            }
+
+            const userMessage =
+              error.userMessage || "Whisper could not transcribe this video's audio.";
+
+            finish(reject, {
+              statusCode: 502,
+              userMessage,
+              diagnosticLog: buildDownloadDiagnostic({
+                operation: "Whisper transcription",
+                userMessage,
+                url,
+                resolution,
+                downloadsDir,
+                commandParts: error.commandParts ||
+                  options.whisperCommandParts ||
+                  getWhisperCommandParts(),
+                stdout,
+                stderr: error.stderr || stderr,
+                exitCode: error.exitCode,
+                error,
+                startedAtMs,
+                extra: addStartupFailuresToExtra(startupFailures, {
+                  downloadedMediaPath: resolvedPath,
+                  whisperModel: "Small multilingual"
+                })
+              })
+            });
+            return;
+          }
+        }
+
         if (sourceSubtitle.enabled) {
           try {
             const subtitleResult = await createSourceSubtitleArtifacts({
@@ -876,6 +1119,14 @@ function buildDownloadDiagnostic(details) {
     operation: "download",
     ...details
   });
+}
+
+function createCancelledDownloadError() {
+  return {
+    statusCode: 499,
+    cancelled: true,
+    userMessage: "The operation was cancelled."
+  };
 }
 
 function describeStartupFailure(commandParts, error) {
@@ -1439,6 +1690,7 @@ module.exports = {
   getFfmpegLocation,
   getYtDlpExecutablePath,
   hasFfmpeg,
+  hasWhisper,
   hasYtDlp,
   isInsideDirectory,
   parseYtDlpPrintOutput,
