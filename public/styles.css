@@ -94,6 +94,63 @@ label {
   gap: 10px;
 }
 
+.source-transcription-options {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffdf9;
+}
+
+.checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.checkbox-field input {
+  appearance: auto;
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.checkbox-field input:disabled {
+  cursor: not-allowed;
+}
+
+.field-subtitle-language {
+  min-width: min(320px, 100%);
+  flex: 1 1 280px;
+}
+
+.field-subtitle-language[hidden] {
+  display: none;
+}
+
+.field-subtitle-language select {
+  min-height: 44px;
+}
+
+.subtitle-availability {
+  flex: 1 0 100%;
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
 input,
 select {
   width: 100%;
@@ -499,6 +556,10 @@ select:disabled {
 
   .preview-panel {
     grid-template-columns: 1fr;
+  }
+
+  .source-transcription-options {
+    align-items: stretch;
   }
 
   button {

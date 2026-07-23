@@ -54,6 +54,27 @@
 
             <button type="submit" id="download-button">Download</button>
           </div>
+
+          <div class="source-transcription-options">
+            <label class="checkbox-field" for="use-source-transcription">
+              <input
+                id="use-source-transcription"
+                name="useSourceTranscription"
+                type="checkbox"
+                aria-describedby="subtitle-availability"
+              />
+              <span>Use transcription from source if available</span>
+            </label>
+
+            <div id="subtitle-language-field" class="field field-subtitle-language" hidden>
+              <label for="subtitle-language">Subtitle language</label>
+              <select id="subtitle-language" name="subtitleLanguage" disabled>
+                <option value="">Choose a language</option>
+              </select>
+            </div>
+
+            <p id="subtitle-availability" class="subtitle-availability" aria-live="polite"></p>
+          </div>
         </form>
 
         <section class="preview-panel" data-state="empty" aria-live="polite" aria-atomic="true">

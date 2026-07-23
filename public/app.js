@@ -5,6 +5,10 @@ const resolutionSelect = document.querySelector("#resolution");
 const accessCodeField = document.querySelector("#access-code-field");
 const accessCodeInput = document.querySelector("#access-code");
 const button = document.querySelector("#download-button");
+const sourceTranscriptionCheckbox = document.querySelector("#use-source-transcription");
+const subtitleLanguageField = document.querySelector("#subtitle-language-field");
+const subtitleLanguageSelect = document.querySelector("#subtitle-language");
+const subtitleAvailability = document.querySelector("#subtitle-availability");
 const previewPanel = document.querySelector(".preview-panel");
 const previewVideo = document.querySelector("#preview-video");
 const previewTitle = document.querySelector("#preview-title");
@@ -36,6 +40,9 @@ let progressTimer;
 let currentProgressPercent = 0;
 let currentSavedPath = "";
 let currentDiagnosticFileName = "classroom-video-downloader-log.txt";
+let currentSubtitleLanguages = [];
+let subtitleDiscoveryState = "idle";
+let subtitlePreviewUrl = "";
 let appConfig = {
   hostedMode: false,
   accessCodeRequired: false,
@@ -48,6 +55,8 @@ input.addEventListener("paste", () => {
   window.setTimeout(schedulePreview, 0);
 });
 resolutionSelect.addEventListener("change", schedulePreview);
+resolutionSelect.addEventListener("change", syncSourceTranscriptionForResolution);
+sourceTranscriptionCheckbox.addEventListener("change", handleSourceTranscriptionChange);
 window.addEventListener("native-download-complete", (event) => {
   const fileName = event.detail?.fileName || "the file";
   const filePath = event.detail?.filePath;
@@ -69,9 +78,22 @@ downloadLogButton.addEventListener("click", downloadDiagnosticLog);
 openFileLocationButton.addEventListener("click", openSavedFileLocation);
 
 loadConfig();
+syncSourceTranscriptionForResolution();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const sourceTranscription = getSourceTranscriptionRequest();
+
+  if (!sourceTranscription.ok) {
+    setState("error", "Subtitle language needed", sourceTranscription.message);
+
+    if (!subtitleLanguageField.hidden) {
+      subtitleLanguageSelect.focus();
+    }
+
+    return;
+  }
+
   const resolutionLabel = resolutionSelect.selectedOptions[0]?.textContent || "selected resolution";
   const action = appConfig.hostedMode ? "Starting" : "Working";
   const progressDetail = appConfig.hostedMode
@@ -86,6 +108,8 @@ form.addEventListener("submit", async (event) => {
   button.disabled = true;
   resolutionSelect.disabled = true;
   accessCodeInput.disabled = true;
+  sourceTranscriptionCheckbox.disabled = true;
+  subtitleLanguageSelect.disabled = true;
 
   try {
     const response = await fetchWithClassroomAccess(apiUrl("/api/download"), {
@@ -95,7 +119,8 @@ form.addEventListener("submit", async (event) => {
       },
       body: JSON.stringify({
         url: input.value,
-        resolution: resolutionSelect.value
+        resolution: resolutionSelect.value,
+        sourceTranscription: sourceTranscription.value
       })
     });
 
@@ -120,6 +145,9 @@ form.addEventListener("submit", async (event) => {
     button.disabled = false;
     resolutionSelect.disabled = false;
     accessCodeInput.disabled = false;
+    syncSourceTranscriptionForResolution();
+    subtitleLanguageSelect.disabled =
+      subtitleLanguageField.hidden || !sourceTranscriptionCheckbox.checked;
   }
 });
 
@@ -152,6 +180,162 @@ function setState(state, label, message) {
   statusPanel.dataset.state = state;
   statusLabel.textContent = label;
   statusMessage.textContent = message;
+}
+
+function syncSourceTranscriptionForResolution() {
+  const isVideoDownload = resolutionSelect.value !== "mp3";
+
+  sourceTranscriptionCheckbox.disabled = !isVideoDownload || button.disabled;
+
+  if (isVideoDownload) {
+    if (!sourceTranscriptionCheckbox.checked && subtitleDiscoveryState === "audio") {
+      subtitleAvailability.textContent = "";
+      subtitleDiscoveryState = "idle";
+    }
+    return;
+  }
+
+  sourceTranscriptionCheckbox.checked = false;
+  subtitleDiscoveryState = "audio";
+  subtitleAvailability.textContent = "Source transcription is available for video downloads only.";
+  hideSubtitleLanguageField();
+}
+
+function handleSourceTranscriptionChange() {
+  if (!sourceTranscriptionCheckbox.checked) {
+    subtitleAvailability.textContent = "";
+    hideSubtitleLanguageField();
+    return;
+  }
+
+  const url = input.value.trim();
+
+  if (!url) {
+    subtitleDiscoveryState = "waiting";
+    subtitleAvailability.textContent = "Enter a video link to check source subtitle languages.";
+    hideSubtitleLanguageField();
+    return;
+  }
+
+  if (subtitlePreviewUrl === url && subtitleDiscoveryState === "ready") {
+    showSubtitleLanguageChoices(currentSubtitleLanguages);
+    return;
+  }
+
+  if (subtitlePreviewUrl === url && subtitleDiscoveryState === "unavailable") {
+    subtitleAvailability.textContent = "No source transcription is available for this video.";
+    hideSubtitleLanguageField();
+    return;
+  }
+
+  subtitleDiscoveryState = "checking";
+  subtitleAvailability.textContent = "Checking source subtitle languages...";
+  hideSubtitleLanguageField();
+  schedulePreview();
+}
+
+function getSourceTranscriptionRequest() {
+  if (!sourceTranscriptionCheckbox.checked) {
+    return {
+      ok: true,
+      value: {
+        enabled: false,
+        language: ""
+      }
+    };
+  }
+
+  if (subtitleDiscoveryState !== "ready") {
+    return {
+      ok: false,
+      message:
+        subtitleDiscoveryState === "checking"
+          ? "Wait for the source subtitle language check to finish."
+          : "No source transcription is available for this video."
+    };
+  }
+
+  if (!subtitleLanguageSelect.value) {
+    return {
+      ok: false,
+      message: "Choose a source subtitle language before downloading."
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      enabled: true,
+      language: subtitleLanguageSelect.value
+    }
+  };
+}
+
+function showSubtitleLanguageChoices(languages) {
+  const previousSelection = subtitleLanguageSelect.value;
+
+  subtitleLanguageSelect.replaceChildren();
+  subtitleLanguageSelect.append(new Option("Choose a language", ""));
+
+  for (const language of languages) {
+    const sourceLabel =
+      language.source === "manual" ? "Creator subtitles" : "Automatic captions";
+    const codeLabel = language.name === language.code ? "" : ` (${language.code})`;
+
+    subtitleLanguageSelect.append(
+      new Option(`${language.name}${codeLabel} - ${sourceLabel}`, language.code)
+    );
+  }
+
+  const canRestoreSelection = languages.some(
+    (language) => language.code === previousSelection
+  );
+
+  subtitleLanguageSelect.value = canRestoreSelection ? previousSelection : "";
+  subtitleLanguageField.hidden = false;
+  subtitleLanguageSelect.disabled = false;
+  subtitleLanguageSelect.required = true;
+  subtitleAvailability.textContent = `${languages.length} source subtitle ${languages.length === 1 ? "language is" : "languages are"} available.`;
+}
+
+function hideSubtitleLanguageField() {
+  subtitleLanguageField.hidden = true;
+  subtitleLanguageSelect.disabled = true;
+  subtitleLanguageSelect.required = false;
+  subtitleLanguageSelect.value = "";
+}
+
+function updateSubtitleDiscovery(payload, url) {
+  subtitlePreviewUrl = url;
+  currentSubtitleLanguages = Array.isArray(payload.subtitleLanguages)
+    ? payload.subtitleLanguages
+    : [];
+  subtitleDiscoveryState = "ready";
+
+  if (!sourceTranscriptionCheckbox.checked) {
+    hideSubtitleLanguageField();
+    return;
+  }
+
+  if (!currentSubtitleLanguages.length) {
+    subtitleDiscoveryState = "unavailable";
+    subtitleAvailability.textContent = "No source transcription is available for this video.";
+    hideSubtitleLanguageField();
+    return;
+  }
+
+  showSubtitleLanguageChoices(currentSubtitleLanguages);
+}
+
+function failSubtitleDiscovery(message) {
+  currentSubtitleLanguages = [];
+  subtitlePreviewUrl = "";
+  subtitleDiscoveryState = "failed";
+  hideSubtitleLanguageField();
+
+  if (sourceTranscriptionCheckbox.checked) {
+    subtitleAvailability.textContent = message || "Source subtitle languages could not be checked.";
+  }
 }
 
 function startDownloadSession(detail) {
@@ -211,6 +395,15 @@ function schedulePreview() {
     return;
   }
 
+  if (
+    sourceTranscriptionCheckbox.checked &&
+    input.value.trim() !== subtitlePreviewUrl
+  ) {
+    subtitleDiscoveryState = "checking";
+    subtitleAvailability.textContent = "Checking source subtitle languages...";
+    hideSubtitleLanguageField();
+  }
+
   setPreviewState("waiting", "Preparing preview...", "");
   previewDebounce = window.setTimeout(loadPreview, 800);
 }
@@ -225,6 +418,12 @@ async function loadPreview() {
 
   previewController = new AbortController();
   setPreviewState("loading", "Loading preview...", "Fetching a playable stream.");
+
+  if (sourceTranscriptionCheckbox.checked) {
+    subtitleDiscoveryState = "checking";
+    subtitleAvailability.textContent = "Checking source subtitle languages...";
+    hideSubtitleLanguageField();
+  }
 
   try {
     const response = await fetchWithClassroomAccess(apiUrl("/api/preview"), {
@@ -249,6 +448,7 @@ async function loadPreview() {
       throw createPayloadError(payload, "Preview failed.");
     }
 
+    updateSubtitleDiscovery(payload, url);
     showPreview(payload);
   } catch (error) {
     if (error.name === "AbortError") {
@@ -256,6 +456,7 @@ async function loadPreview() {
     }
 
     setPreviewState("error", "Preview unavailable", error.message);
+    failSubtitleDiscovery("Source subtitle languages could not be checked for this link.");
     showDiagnosticLog(error);
   }
 }
@@ -313,6 +514,18 @@ function resetPreview(title, message) {
   previewVideo.removeAttribute("poster");
   previewVideo.hidden = true;
   previewVideo.load();
+  currentSubtitleLanguages = [];
+  subtitlePreviewUrl = "";
+
+  if (sourceTranscriptionCheckbox.checked) {
+    subtitleDiscoveryState = "waiting";
+    subtitleAvailability.textContent = "Enter a video link to check source subtitle languages.";
+  } else if (resolutionSelect.value !== "mp3") {
+    subtitleDiscoveryState = "idle";
+    subtitleAvailability.textContent = "";
+  }
+
+  hideSubtitleLanguageField();
   setPreviewState("empty", title, message);
 }
 
@@ -372,6 +585,7 @@ async function waitForDownloadJob(payload) {
       startAutomaticDownload({
         fileName: job.fileName,
         downloadUrl: job.downloadUrl,
+        artifacts: job.artifacts,
         resolutionLabel: job.resolutionLabel,
         actualResolutionLabel: job.actualResolutionLabel,
         adjustmentMessage: job.adjustmentMessage
@@ -462,9 +676,17 @@ function clearDiagnosticLog() {
 function showDownloadSaved(payload) {
   const fileName = payload.savedFileName || payload.fileName || "The file";
   const notice = payload.adjustmentMessage ? `${payload.adjustmentMessage} ` : "";
+  const artifactCount = Array.isArray(payload.artifacts) ? payload.artifacts.length : 0;
+  const artifactNotice = artifactCount
+    ? ` The SRT subtitles and readable TXT transcript were saved alongside it.`
+    : "";
 
   finishDownloadSession("Saved to your computer.");
-  setState("success", "Saved", `${notice}${fileName} has been saved to ${payload.savedPath}.`);
+  setState(
+    "success",
+    "Saved",
+    `${notice}${fileName} has been saved to ${payload.savedPath}.${artifactNotice}`
+  );
   showFileLocationAction(payload.savedPath);
 }
 
@@ -515,13 +737,24 @@ function startAutomaticDownload(payload) {
   const downloadUrl = apiUrl(payload.downloadUrl);
   const notice = payload.adjustmentMessage ? `${payload.adjustmentMessage} ` : "";
   const resolutionLabel = payload.actualResolutionLabel || payload.resolutionLabel;
+  const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : [];
 
   finishDownloadSession("Starting browser save.");
   triggerBrowserDownload(downloadUrl, payload.fileName);
+
+  artifacts.forEach((artifact, index) => {
+    window.setTimeout(() => {
+      triggerAdditionalBrowserDownload(apiUrl(artifact.downloadUrl), artifact.fileName);
+    }, 750 * (index + 1));
+  });
+
+  const artifactNotice = artifacts.length
+    ? " The SRT subtitles and TXT transcript will follow."
+    : "";
   setState(
     "success",
     "Downloading",
-    `${notice}${payload.fileName} is being downloaded automatically (${resolutionLabel}).`
+    `${notice}${payload.fileName} is being downloaded automatically (${resolutionLabel}).${artifactNotice}`
   );
 }
 
@@ -534,6 +767,17 @@ function triggerBrowserDownload(url, fileName) {
   }
 
   downloadFrame.src = url;
+}
+
+function triggerAdditionalBrowserDownload(url, fileName) {
+  const frame = document.createElement("iframe");
+
+  frame.title = `Automatic download for ${fileName || "transcript file"}`;
+  frame.hidden = true;
+  document.body.append(frame);
+  frame.src = url;
+
+  window.setTimeout(() => frame.remove(), 60000);
 }
 
 function fetchWithClassroomAccess(url, options = {}) {

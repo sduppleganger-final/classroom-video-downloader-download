@@ -15,10 +15,34 @@ const {
   buildActualResolutionLabel,
   buildResolutionAdjustmentMessage,
   downloadVideo,
+  mapYtDlpError,
   parseYtDlpPrintOutput,
   parseYtDlpProgressOutput,
   resolveDownloadedFilePath
 } = require("../server");
+
+test("maps source subtitle throttling and stale-track failures clearly", () => {
+  const sourceSubtitle = { enabled: true, language: "iw" };
+
+  assert.deepEqual(
+    mapYtDlpError("HTTP Error 429: Too Many Requests", { sourceSubtitle }),
+    {
+      statusCode: 503,
+      userMessage:
+        "The platform temporarily limited access to its subtitle track. Wait a few minutes and try again."
+    }
+  );
+  assert.deepEqual(
+    mapYtDlpError("Unable to download video subtitles for 'iw'", {
+      sourceSubtitle
+    }),
+    {
+      statusCode: 409,
+      userMessage:
+        "The selected source subtitle track is no longer available. Refresh the preview and choose an available language."
+    }
+  );
+});
 
 test("builds regular video download arguments without audio extraction", () => {
   const args = buildDownloadArgs(
@@ -79,6 +103,37 @@ test("prints marked metadata for downloaded file and resolution", () => {
   assert.equal(args.includes("after_move:__CVD_FILE__%(filepath)s"), true);
   assert.equal(args.includes("after_move:__CVD_WIDTH__%(width)s"), true);
   assert.equal(args.includes("after_move:__CVD_HEIGHT__%(height)s"), true);
+  assert.equal(args.includes("after_move:__CVD_DURATION__%(duration)s"), true);
+});
+
+test("includes one selected source subtitle language and timestamp-matched SRT output", () => {
+  const args = buildDownloadArgs(
+    "https://example.com/video",
+    {
+      downloadType: "video",
+      format: "best"
+    },
+    "downloads",
+    {
+      enabled: true,
+      language: "he"
+    }
+  );
+
+  assert.equal(args.includes("--write-subs"), true);
+  assert.equal(args.includes("--write-auto-subs"), true);
+  assert.equal(args.includes("^he$"), true);
+  assert.equal(args.includes("--convert-subs"), true);
+  assert.equal(args.includes("srt"), true);
+  assert.equal(
+    args.some(
+      (value) =>
+        typeof value === "string" &&
+        value.startsWith("subtitle:%(title)s - ") &&
+        value.endsWith(".%(language)s.%(ext)s")
+    ),
+    true
+  );
 });
 
 test("prints marked progress updates while downloading", () => {
@@ -104,13 +159,15 @@ test("parses yt-dlp marked print output", () => {
     [
       "__CVD_FILE__C:\\\\Downloads\\\\lesson.mp4",
       "__CVD_WIDTH__1280",
-      "__CVD_HEIGHT__720"
+      "__CVD_HEIGHT__720",
+      "__CVD_DURATION__123.5"
     ].join("\\n")
   );
 
   assert.equal(parsed.filePath, "C:\\\\Downloads\\\\lesson.mp4");
   assert.equal(parsed.width, 1280);
   assert.equal(parsed.height, 720);
+  assert.equal(parsed.duration, 123.5);
 });
 
 test("parses yt-dlp marked progress output", () => {

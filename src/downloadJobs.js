@@ -38,7 +38,7 @@ class DownloadJobManager {
     }
   }
 
-  createJob({ url, resolution }) {
+  createJob({ url, resolution, sourceSubtitle = { enabled: false, language: "" } }) {
     const now = this.now();
     const job = {
       id: crypto.randomUUID(),
@@ -47,6 +47,8 @@ class DownloadJobManager {
       updatedAt: now.toISOString(),
       expiresAt: null,
       fileName: null,
+      artifacts: [],
+      cleanupFileNames: [],
       downloadToken: crypto.randomBytes(24).toString("hex"),
       error: null,
       diagnosticLog: null,
@@ -60,7 +62,7 @@ class DownloadJobManager {
     };
 
     this.jobs.set(job.id, job);
-    this.queue.push({ jobId: job.id, url, resolution });
+    this.queue.push({ jobId: job.id, url, resolution, sourceSubtitle });
     this.pumpQueue();
 
     return this.serializeJob(job);
@@ -93,6 +95,28 @@ class DownloadJobManager {
     return filePath;
   }
 
+  getArtifactPath(jobId, downloadToken, artifactId) {
+    const job = this.jobs.get(jobId);
+
+    if (!job || job.status !== "complete" || !isValidDownloadToken(job, downloadToken)) {
+      return null;
+    }
+
+    const artifact = job.artifacts.find((item) => item.id === artifactId);
+
+    if (!artifact) {
+      return null;
+    }
+
+    const filePath = path.resolve(this.downloadsDir, artifact.fileName);
+
+    if (!isInsideDirectory(filePath, this.downloadsDir) || !fs.existsSync(filePath)) {
+      return null;
+    }
+
+    return filePath;
+  }
+
   cleanupExpiredJobs() {
     const now = this.now().getTime();
 
@@ -101,11 +125,23 @@ class DownloadJobManager {
         continue;
       }
 
-      if (this.cleanupFiles && job.fileName) {
-        const filePath = path.resolve(this.downloadsDir, job.fileName);
+      if (this.cleanupFiles) {
+        const fileNames = new Set([
+          job.fileName,
+          ...job.artifacts.map((artifact) => artifact.fileName),
+          ...job.cleanupFileNames
+        ]);
 
-        if (isInsideDirectory(filePath, this.downloadsDir) && fs.existsSync(filePath)) {
-          fs.rmSync(filePath, { force: true });
+        for (const fileName of fileNames) {
+          if (!fileName) {
+            continue;
+          }
+
+          const filePath = path.resolve(this.downloadsDir, fileName);
+
+          if (isInsideDirectory(filePath, this.downloadsDir) && fs.existsSync(filePath)) {
+            fs.rmSync(filePath, { force: true });
+          }
         }
       }
 
@@ -143,7 +179,7 @@ class DownloadJobManager {
     }
   }
 
-  async runJob({ jobId, url, resolution }) {
+  async runJob({ jobId, url, resolution, sourceSubtitle }) {
     const job = this.jobs.get(jobId);
 
     if (!job) {
@@ -160,15 +196,23 @@ class DownloadJobManager {
 
     try {
       const result = await this.downloadVideo(url, resolution, this.downloadsDir, {
+        sourceSubtitle,
         onProgress: (progress) => {
           this.updateProgress(job, progress);
         }
       });
       const expiresAt = new Date(this.now().getTime() + this.jobTtlMs).toISOString();
+      const artifacts = normalizeJobArtifacts(result.artifacts, this.downloadsDir);
+      const cleanupFileNames = normalizeCleanupFileNames(
+        result.cleanupFilePaths,
+        this.downloadsDir
+      );
 
       this.updateJob(job, {
         status: "complete",
         fileName: result.fileName,
+        artifacts,
+        cleanupFileNames,
         actualResolutionLabel: result.actualResolutionLabel || null,
         adjustmentMessage: result.adjustmentMessage || null,
         progressPercent: 100,
@@ -236,6 +280,15 @@ class DownloadJobManager {
       updatedAt: job.updatedAt,
       expiresAt: job.expiresAt,
       fileName: job.fileName,
+      artifacts: job.artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind,
+        fileName: artifact.fileName,
+        downloadUrl:
+          job.status === "complete"
+            ? `/api/downloads/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(artifact.id)}?token=${job.downloadToken}`
+            : null
+      })),
       error: job.error,
       diagnosticLog: job.diagnosticLog,
       diagnosticFileName: job.diagnosticFileName,
@@ -250,6 +303,65 @@ class DownloadJobManager {
           ? `/api/downloads/${encodeURIComponent(job.id)}/file?token=${job.downloadToken}`
           : null
     };
+  }
+}
+
+function normalizeJobArtifacts(artifacts, downloadsDir) {
+  if (!Array.isArray(artifacts)) {
+    return [];
+  }
+
+  const seenIds = new Set();
+
+  return artifacts.flatMap((artifact) => {
+    const id = typeof artifact?.id === "string" ? artifact.id.trim() : "";
+    const kind = typeof artifact?.kind === "string" ? artifact.kind.trim() : "";
+    const filePath = artifact?.filePath
+      ? path.resolve(artifact.filePath)
+      : artifact?.fileName
+        ? path.resolve(downloadsDir, artifact.fileName)
+        : "";
+
+    if (
+      !/^[a-z0-9-]{1,40}$/.test(id) ||
+      seenIds.has(id) ||
+      !kind ||
+      !filePath ||
+      !isInsideDirectory(filePath, downloadsDir) ||
+      !isExistingFile(filePath)
+    ) {
+      return [];
+    }
+
+    seenIds.add(id);
+
+    return [{ id, kind, fileName: path.basename(filePath) }];
+  });
+}
+
+function normalizeCleanupFileNames(filePaths, downloadsDir) {
+  if (!Array.isArray(filePaths)) {
+    return [];
+  }
+
+  return [...new Set(filePaths.flatMap((filePath) => {
+    if (typeof filePath !== "string") {
+      return [];
+    }
+
+    const resolvedPath = path.resolve(filePath);
+
+    return isInsideDirectory(resolvedPath, downloadsDir)
+      ? [path.basename(resolvedPath)]
+      : [];
+  }))];
+}
+
+function isExistingFile(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
   }
 }
 

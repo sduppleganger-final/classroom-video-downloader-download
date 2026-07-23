@@ -34,7 +34,13 @@ test("parses preview metadata with a selected stream URL", () => {
       duration: 123,
       thumbnail: "https://cdn.example/thumb.jpg",
       url: "https://cdn.example/video.mp4",
-      webpage_url: "https://example.com/watch"
+      webpage_url: "https://example.com/watch",
+      subtitles: {
+        en: [{ name: "English", ext: "vtt" }]
+      },
+      automatic_captions: {
+        he: [{ name: "Hebrew", ext: "json3" }]
+      }
     })
   );
 
@@ -43,6 +49,10 @@ test("parses preview metadata with a selected stream URL", () => {
   assert.equal(preview.thumbnail, "https://cdn.example/thumb.jpg");
   assert.equal(preview.streamUrl, "https://cdn.example/video.mp4");
   assert.equal(preview.webpageUrl, "https://example.com/watch");
+  assert.deepEqual(preview.subtitleLanguages, [
+    { code: "en", name: "English", source: "manual" },
+    { code: "he", name: "Hebrew", source: "automatic" }
+  ]);
 });
 
 test("finds stream URLs from requested downloads", () => {

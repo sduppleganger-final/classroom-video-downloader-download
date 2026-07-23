@@ -1,5 +1,6 @@
 const { spawn } = require("child_process");
 const { createFailureDiagnostic } = require("./diagnostics");
+const { extractSubtitleLanguages } = require("./sourceSubtitles");
 const {
   getYtDlpCommandCandidates,
   getYtDlpCommandParts,
@@ -240,7 +241,8 @@ function parsePreviewOutput(output) {
     duration: typeof payload.duration === "number" ? payload.duration : null,
     thumbnail: payload.thumbnail || "",
     streamUrl,
-    webpageUrl: payload.webpage_url || payload.original_url || ""
+    webpageUrl: payload.webpage_url || payload.original_url || "",
+    subtitleLanguages: extractSubtitleLanguages(payload)
   };
 }
 

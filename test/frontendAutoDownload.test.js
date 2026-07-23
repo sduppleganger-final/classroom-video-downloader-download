@@ -90,3 +90,28 @@ test("desktop completion exposes an open file location action", () => {
   assert.match(stylesCss, /\.file-actions\[hidden\]/);
   assert.match(electronMain, /shell\.showItemInFolder\(filePath\)/);
 });
+
+test("frontend offers source transcription discovery and language selection", () => {
+  const indexHtml = fs.readFileSync(path.join(projectRoot, "public", "index.html"), "utf8");
+  const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
+  const stylesCss = fs.readFileSync(path.join(projectRoot, "public", "styles.css"), "utf8");
+
+  assert.match(indexHtml, /id="use-source-transcription"/);
+  assert.match(indexHtml, />Use transcription from source if available</);
+  assert.match(indexHtml, /id="subtitle-language"/);
+  assert.match(indexHtml, /id="subtitle-availability"/);
+  assert.match(appJs, /payload\.subtitleLanguages/);
+  assert.match(appJs, /sourceTranscription: sourceTranscription\.value/);
+  assert.match(appJs, /Choose a source subtitle language before downloading/);
+  assert.match(stylesCss, /\.checkbox-field input/);
+  assert.match(stylesCss, /\.field-subtitle-language\[hidden\]/);
+});
+
+test("frontend automatically downloads completed SRT and TXT artifacts", () => {
+  const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
+
+  assert.match(appJs, /artifacts: job\.artifacts/);
+  assert.match(appJs, /payload\.artifacts/);
+  assert.match(appJs, /triggerAdditionalBrowserDownload/);
+  assert.match(appJs, /The SRT subtitles and TXT transcript will follow/);
+});

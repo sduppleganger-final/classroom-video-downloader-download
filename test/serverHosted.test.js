@@ -7,6 +7,7 @@ const { createApp } = require("../server");
 
 test("hosted mode runs protected download jobs", async (t) => {
   const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-server-"));
+  let receivedSourceSubtitle;
   t.after(() => fs.rmSync(downloadsDir, { recursive: true, force: true }));
 
   const app = createApp({
@@ -15,13 +16,30 @@ test("hosted mode runs protected download jobs", async (t) => {
     downloadsDir,
     startCleanupTimer: false,
     downloadVideo: async (_url, _resolution, jobDownloadsDir, options = {}) => {
+      receivedSourceSubtitle = options.sourceSubtitle;
       options.onProgress?.({
         percent: 61,
         stage: "downloading",
         message: "Downloading 61%."
       });
       fs.writeFileSync(path.join(jobDownloadsDir, "hosted.mp4"), "hosted-demo");
-      return { fileName: "hosted.mp4" };
+      fs.writeFileSync(path.join(jobDownloadsDir, "hosted.en.srt"), "hosted-subtitles");
+      fs.writeFileSync(path.join(jobDownloadsDir, "hosted.en.txt"), "hosted-transcript");
+      return {
+        fileName: "hosted.mp4",
+        artifacts: [
+          {
+            id: "subtitles",
+            kind: "subtitles",
+            filePath: path.join(jobDownloadsDir, "hosted.en.srt")
+          },
+          {
+            id: "transcript",
+            kind: "transcript",
+            filePath: path.join(jobDownloadsDir, "hosted.en.txt")
+          }
+        ]
+      };
     }
   });
   const server = await listen(app);
@@ -56,7 +74,11 @@ test("hosted mode runs protected download jobs", async (t) => {
     },
     body: JSON.stringify({
       url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      resolution: "best"
+      resolution: "best",
+      sourceTranscription: {
+        enabled: true,
+        language: "en"
+      }
     })
   });
 
@@ -70,7 +92,11 @@ test("hosted mode runs protected download jobs", async (t) => {
     },
     body: JSON.stringify({
       url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      resolution: "best"
+      resolution: "best",
+      sourceTranscription: {
+        enabled: true,
+        language: "en"
+      }
     })
   });
 
@@ -82,6 +108,14 @@ test("hosted mode runs protected download jobs", async (t) => {
   assert.equal(readyJob.fileName, "hosted.mp4");
   assert.equal(readyJob.progressPercent, 100);
   assert.equal(readyJob.progressStage, "complete");
+  assert.deepEqual(receivedSourceSubtitle, { enabled: true, language: "en" });
+  assert.deepEqual(
+    readyJob.artifacts.map((artifact) => [artifact.id, artifact.fileName]),
+    [
+      ["subtitles", "hosted.en.srt"],
+      ["transcript", "hosted.en.txt"]
+    ]
+  );
 
   const deniedFile = await fetch(`${baseUrl}${readyJob.downloadUrl.split("?")[0]}`);
   assert.equal(deniedFile.status, 403);
@@ -90,6 +124,17 @@ test("hosted mode runs protected download jobs", async (t) => {
 
   assert.equal(fileResponse.status, 200);
   assert.equal(await fileResponse.text(), "hosted-demo");
+
+  const deniedArtifact = await fetch(
+    `${baseUrl}${readyJob.artifacts[0].downloadUrl.split("?")[0]}`
+  );
+  assert.equal(deniedArtifact.status, 403);
+
+  const subtitleResponse = await fetch(
+    `${baseUrl}${readyJob.artifacts[0].downloadUrl}`
+  );
+  assert.equal(subtitleResponse.status, 200);
+  assert.equal(await subtitleResponse.text(), "hosted-subtitles");
 });
 
 function listen(app) {

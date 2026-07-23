@@ -125,13 +125,24 @@ async function createMainWindow() {
         const panel = document.querySelector('.tool-panel');
         const preview = document.querySelector('.preview-panel');
         const heading = document.querySelector('#page-title');
+        const sourceTranscription = document.querySelector('#use-source-transcription');
+        const subtitleLanguageField = document.querySelector('#subtitle-language-field');
         const panelRect = panel ? panel.getBoundingClientRect() : null;
         const previewRect = preview ? preview.getBoundingClientRect() : null;
+        const sourceTranscriptionRect = sourceTranscription
+          ? sourceTranscription.getBoundingClientRect()
+          : null;
         return {
           title: document.title,
           heading: heading ? heading.textContent : null,
           panelVisible: Boolean(panel && panelRect.width > 0 && panelRect.height > 0),
           previewVisible: Boolean(preview && previewRect.width > 0 && previewRect.height > 0),
+          sourceTranscriptionVisible: Boolean(
+            sourceTranscription &&
+            sourceTranscriptionRect.width > 0 &&
+            sourceTranscriptionRect.height > 0
+          ),
+          subtitleLanguageHidden: Boolean(subtitleLanguageField && subtitleLanguageField.hidden),
           panelRect: panelRect ? {
             width: Math.round(panelRect.width),
             height: Math.round(panelRect.height),
@@ -148,7 +159,14 @@ async function createMainWindow() {
       })();
     `);
 
-    if (!result.panelVisible || !result.previewVisible || !helperStatus.ffmpeg || !helperStatus.ytDlp) {
+    if (
+      !result.panelVisible ||
+      !result.previewVisible ||
+      !result.sourceTranscriptionVisible ||
+      !result.subtitleLanguageHidden ||
+      !helperStatus.ffmpeg ||
+      !helperStatus.ytDlp
+    ) {
       throw new Error(
         `Desktop smoke test failed: ${JSON.stringify({ ...result, helperStatus })}`
       );

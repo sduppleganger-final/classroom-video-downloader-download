@@ -196,6 +196,96 @@ test("direct desktop mode saves from the actual resolved file path", async (t) =
   assert.equal(fs.readFileSync(payload.savedPath, "utf8"), "audio-demo");
 });
 
+test("direct desktop mode saves a captioned video with SRT and TXT artifacts", async (t) => {
+  const workingDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-working-"));
+  const finalDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-final-"));
+  let receivedSourceSubtitle;
+
+  t.after(() => {
+    fs.rmSync(workingDownloadsDir, { recursive: true, force: true });
+    fs.rmSync(finalDownloadsDir, { recursive: true, force: true });
+  });
+
+  const app = createApp({
+    hostedMode: false,
+    downloadsDir: workingDownloadsDir,
+    finalDownloadsDir,
+    downloadVideo: async (_url, _resolution, downloadsDir, options) => {
+      receivedSourceSubtitle = options.sourceSubtitle;
+      const videoPath = path.join(downloadsDir, "lecture - subtitled he.mp4");
+      const subtitlePath = path.join(downloadsDir, "lecture.he.srt");
+      const transcriptPath = path.join(downloadsDir, "lecture.he.txt");
+
+      fs.writeFileSync(videoPath, "captioned-video");
+      fs.writeFileSync(subtitlePath, "subtitle");
+      fs.writeFileSync(transcriptPath, "transcript");
+
+      return {
+        fileName: path.basename(videoPath),
+        filePath: videoPath,
+        artifacts: [
+          { id: "subtitles", kind: "subtitles", filePath: subtitlePath },
+          { id: "transcript", kind: "transcript", filePath: transcriptPath }
+        ]
+      };
+    }
+  });
+  const server = await listen(app);
+  t.after(() => server.close());
+
+  const payload = await fetchJson(`http://127.0.0.1:${server.address().port}/api/download`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      resolution: "best",
+      sourceTranscription: {
+        enabled: true,
+        language: "he"
+      }
+    })
+  });
+
+  assert.deepEqual(receivedSourceSubtitle, { enabled: true, language: "he" });
+  assert.equal(fs.readFileSync(payload.savedPath, "utf8"), "captioned-video");
+  assert.deepEqual(
+    payload.artifacts.map((artifact) => [artifact.id, path.basename(artifact.savedPath)]),
+    [
+      ["subtitles", "lecture.he.srt"],
+      ["transcript", "lecture.he.txt"]
+    ]
+  );
+  assert.equal(fs.readFileSync(payload.artifacts[0].savedPath, "utf8"), "subtitle");
+  assert.equal(fs.readFileSync(payload.artifacts[1].savedPath, "utf8"), "transcript");
+});
+
+test("direct mode rejects source transcription for MP3 downloads", async (t) => {
+  const app = createApp({ hostedMode: false });
+  const server = await listen(app);
+  t.after(() => server.close());
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/download`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      resolution: "mp3",
+      sourceTranscription: {
+        enabled: true,
+        language: "en"
+      }
+    })
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error, "Source subtitles can only be added to a video download.");
+});
+
 test("direct desktop mode returns diagnostic logs for failed downloads", async (t) => {
   const workingDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-working-"));
 

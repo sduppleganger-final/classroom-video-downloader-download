@@ -12,6 +12,11 @@ const { getVideoPreview } = require("./src/videoPreview");
 const { resolvePackagedBinaryPath } = require("./src/binaryPath");
 const { getAvailableDownloadPath } = require("./electron/downloadPath");
 const {
+  buildSourceSubtitleArgs,
+  createSourceSubtitleArtifacts,
+  normalizeSourceSubtitleSelection
+} = require("./src/sourceSubtitles");
+const {
   getBundledYtDlpPath,
   getYtDlpCommandCandidates,
   getYtDlpCommandParts,
@@ -26,6 +31,7 @@ const ytDlpPrintPrefixes = {
   filePath: "__CVD_FILE__",
   width: "__CVD_WIDTH__",
   height: "__CVD_HEIGHT__",
+  duration: "__CVD_DURATION__",
   progress: "__CVD_PROGRESS__"
 };
 
@@ -87,6 +93,10 @@ function createApp(options = {}) {
 
   app.get("/api/downloads/:jobId/file", (request, response) => {
     sendDownloadFile(request, response, downloadJobs);
+  });
+
+  app.get("/api/downloads/:jobId/artifacts/:artifactId", (request, response) => {
+    sendArtifactFile(request, response, downloadJobs);
   });
 
   app.use("/api", accessControl.middleware);
@@ -161,10 +171,21 @@ function createApp(options = {}) {
       return;
     }
 
+    const sourceSubtitle = normalizeSourceSubtitleSelection(
+      request.body?.sourceTranscription,
+      resolution
+    );
+
+    if (!sourceSubtitle.ok) {
+      response.status(400).json({ error: sourceSubtitle.message });
+      return;
+    }
+
     if (hostedMode) {
       const job = downloadJobs.createJob({
         url: parsed.normalizedUrl,
-        resolution
+        resolution,
+        sourceSubtitle: sourceSubtitle.value
       });
 
       response.status(202).json({
@@ -179,14 +200,23 @@ function createApp(options = {}) {
     }
 
     try {
-      const result = await runDownload(parsed.normalizedUrl, resolution, downloadsDir);
+      const result = await runDownload(parsed.normalizedUrl, resolution, downloadsDir, {
+        sourceSubtitle: sourceSubtitle.value
+      });
       const completedFileName = result.filePath
         ? path.basename(result.filePath)
         : result.fileName;
+      const artifacts = normalizeDownloadArtifacts(result.artifacts, downloadsDir);
 
       const payload = {
         fileName: completedFileName,
         downloadUrl: `/downloads/${encodeURIComponent(completedFileName)}`,
+        artifacts: artifacts.map((artifact) => ({
+          id: artifact.id,
+          kind: artifact.kind,
+          fileName: artifact.fileName,
+          downloadUrl: `/downloads/${encodeURIComponent(artifact.fileName)}`
+        })),
         resolution: resolution.value,
         resolutionLabel: resolution.label,
         actualResolutionLabel: result.actualResolutionLabel || null,
@@ -204,6 +234,25 @@ function createApp(options = {}) {
         payload.saved = true;
         payload.savedPath = savedDownload.filePath;
         payload.savedFileName = savedDownload.fileName;
+
+        payload.artifacts = await Promise.all(
+          artifacts.map(async (artifact) => {
+            const savedArtifact = await saveDirectDownloadToFinalDirectory({
+              downloadsDir,
+              finalDownloadsDir,
+              fileName: artifact.fileName,
+              sourceFilePath: artifact.filePath
+            });
+
+            return {
+              id: artifact.id,
+              kind: artifact.kind,
+              fileName: artifact.fileName,
+              savedFileName: savedArtifact.fileName,
+              savedPath: savedArtifact.filePath
+            };
+          })
+        );
       }
 
       response.json(payload);
@@ -292,6 +341,34 @@ function sendDownloadFile(request, response, downloadJobs) {
   response.download(filePath, job.fileName);
 }
 
+function sendArtifactFile(request, response, downloadJobs) {
+  const job = downloadJobs.getJob(request.params.jobId);
+
+  if (!job) {
+    response.status(404).json({ error: "Download job not found or expired." });
+    return;
+  }
+
+  if (job.status !== "complete") {
+    response.status(409).json({ error: "The download is not ready yet." });
+    return;
+  }
+
+  const artifact = job.artifacts?.find((item) => item.id === request.params.artifactId);
+  const filePath = downloadJobs.getArtifactPath(
+    request.params.jobId,
+    typeof request.query?.token === "string" ? request.query.token : "",
+    request.params.artifactId
+  );
+
+  if (!artifact || !filePath) {
+    response.status(403).json({ error: "This transcript download link is invalid or expired." });
+    return;
+  }
+
+  response.download(filePath, artifact.fileName);
+}
+
 async function saveDirectDownloadToFinalDirectory({
   downloadsDir,
   finalDownloadsDir,
@@ -360,6 +437,43 @@ async function saveDirectDownloadToFinalDirectory({
       })
     };
   }
+}
+
+function normalizeDownloadArtifacts(artifacts, downloadsDir) {
+  if (!Array.isArray(artifacts)) {
+    return [];
+  }
+
+  const seenIds = new Set();
+
+  return artifacts.flatMap((artifact) => {
+    const id = typeof artifact?.id === "string" ? artifact.id.trim() : "";
+    const kind = typeof artifact?.kind === "string" ? artifact.kind.trim() : "";
+    const filePath = typeof artifact?.filePath === "string"
+      ? path.resolve(artifact.filePath)
+      : "";
+
+    if (
+      !/^[a-z0-9-]{1,40}$/.test(id) ||
+      seenIds.has(id) ||
+      !kind ||
+      !filePath ||
+      !isInsideDirectory(filePath, downloadsDir) ||
+      !fs.existsSync(filePath) ||
+      !fs.statSync(filePath).isFile()
+    ) {
+      return [];
+    }
+
+    seenIds.add(id);
+
+    return [{
+      id,
+      kind,
+      fileName: path.basename(filePath),
+      filePath
+    }];
+  });
 }
 
 function resolveOpenableDownloadPath(filePath, finalDownloadsDir) {
@@ -431,10 +545,14 @@ function downloadVideo(
   return new Promise((resolve, reject) => {
     const startedAtMs = Date.now();
     const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+    const sourceSubtitle = options.sourceSubtitle?.enabled
+      ? options.sourceSubtitle
+      : { enabled: false, language: "" };
 
-    if (resolution.downloadType === "audio" && !hasFfmpeg()) {
-      const userMessage =
-        "MP3 conversion needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it.";
+    if ((resolution.downloadType === "audio" || sourceSubtitle.enabled) && !hasFfmpeg()) {
+      const userMessage = sourceSubtitle.enabled
+        ? "Adding source subtitles needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it."
+        : "MP3 conversion needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it.";
 
       reject({
         statusCode: 500,
@@ -460,7 +578,7 @@ function downloadVideo(
       message: "Starting the bundled media extractor."
     });
 
-    const downloadArgs = buildDownloadArgs(url, resolution, downloadsDir);
+    const downloadArgs = buildDownloadArgs(url, resolution, downloadsDir, sourceSubtitle);
     const commandCandidates =
       Array.isArray(options.commandCandidates) && options.commandCandidates.length > 0
         ? options.commandCandidates
@@ -564,7 +682,7 @@ function downloadVideo(
         });
       });
 
-      child.on("close", (code) => {
+      child.on("close", async (code) => {
         if (timeout) {
           clearTimeout(timeout);
         }
@@ -590,7 +708,7 @@ function downloadVideo(
             return;
           }
 
-          const mappedError = mapYtDlpError(stderr || stdout);
+          const mappedError = mapYtDlpError(stderr || stdout, { sourceSubtitle });
 
           mappedError.diagnosticLog = buildDownloadDiagnostic({
             operation: "download",
@@ -611,9 +729,11 @@ function downloadVideo(
         }
 
         reportDownloadProgress(onProgress, {
-          percent: 96,
+          percent: sourceSubtitle.enabled ? 94 : 96,
           stage: "finalizing",
-          message: "Finalizing the downloaded file."
+          message: sourceSubtitle.enabled
+            ? "Preparing the downloaded video for source subtitles."
+            : "Finalizing the downloaded file."
         });
 
         const printedOutput = parseYtDlpPrintOutput(stdout);
@@ -679,14 +799,64 @@ function downloadVideo(
           return;
         }
 
-        finish(resolve, {
+        const result = {
           fileName: path.basename(resolvedPath),
           filePath: resolvedPath,
           width: printedOutput.width,
           height: printedOutput.height,
+          duration: printedOutput.duration,
           actualResolutionLabel: buildActualResolutionLabel(printedOutput),
           adjustmentMessage: buildResolutionAdjustmentMessage(resolution, printedOutput)
-        });
+        };
+
+        if (sourceSubtitle.enabled) {
+          try {
+            const subtitleResult = await createSourceSubtitleArtifacts({
+              downloadsDir,
+              mediaPath: resolvedPath,
+              language: sourceSubtitle.language,
+              width: printedOutput.width,
+              height: printedOutput.height,
+              duration: printedOutput.duration,
+              startedAtMs,
+              ffmpegCommandParts: options.ffmpegCommandParts || {
+                command: getFfmpegCheckCommand(),
+                args: []
+              },
+              onProgress
+            });
+
+            Object.assign(result, subtitleResult);
+          } catch (error) {
+            const userMessage =
+              error.userMessage || "The source subtitles could not be added to the video.";
+
+            finish(reject, {
+              statusCode: 502,
+              userMessage,
+              diagnosticLog: buildDownloadDiagnostic({
+                operation: "source subtitle processing",
+                userMessage,
+                url,
+                resolution,
+                downloadsDir,
+                commandParts: error.commandParts || commandParts,
+                stdout,
+                stderr: error.stderr || stderr,
+                exitCode: error.exitCode,
+                error,
+                startedAtMs,
+                extra: addStartupFailuresToExtra(startupFailures, {
+                  sourceSubtitleLanguage: sourceSubtitle.language,
+                  downloadedMediaPath: resolvedPath
+                })
+              })
+            });
+            return;
+          }
+        }
+
+        finish(resolve, result);
       });
     }
 
@@ -742,7 +912,14 @@ function addStartupFailuresToExtra(startupFailures, extra = {}) {
   };
 }
 
-function buildDownloadArgs(url, resolution, downloadsDir = path.join(rootDir, "downloads")) {
+function buildDownloadArgs(
+  url,
+  resolution,
+  downloadsDir = path.join(rootDir, "downloads"),
+  sourceSubtitle = { enabled: false, language: "" }
+) {
+  const outputTemplate = buildDownloadOutputTemplate();
+
   return [
     "--no-playlist",
     "--no-warnings",
@@ -757,14 +934,21 @@ function buildDownloadArgs(url, resolution, downloadsDir = path.join(rootDir, "d
     "--paths",
     downloadsDir,
     "--output",
-    buildDownloadOutputTemplate(),
+    outputTemplate,
     ...buildAudioPostProcessArgs(resolution),
+    ...buildSourceSubtitleArgs(
+      sourceSubtitle,
+      outputTemplate,
+      sourceSubtitle.enabled ? getFfmpegLocation() : ""
+    ),
     "--print",
     `after_move:${ytDlpPrintPrefixes.filePath}%(filepath)s`,
     "--print",
     `after_move:${ytDlpPrintPrefixes.width}%(width)s`,
     "--print",
     `after_move:${ytDlpPrintPrefixes.height}%(height)s`,
+    "--print",
+    `after_move:${ytDlpPrintPrefixes.duration}%(duration)s`,
     url
   ];
 }
@@ -802,7 +986,8 @@ function parseYtDlpPrintOutput(stdout) {
   const output = {
     filePath: "",
     width: null,
-    height: null
+    height: null,
+    duration: null
   };
 
   for (const line of lines) {
@@ -818,6 +1003,13 @@ function parseYtDlpPrintOutput(stdout) {
 
     if (line.startsWith(ytDlpPrintPrefixes.height)) {
       output.height = parsePositiveInteger(line.slice(ytDlpPrintPrefixes.height.length));
+      continue;
+    }
+
+    if (line.startsWith(ytDlpPrintPrefixes.duration)) {
+      output.duration = parsePositiveNumber(
+        line.slice(ytDlpPrintPrefixes.duration.length)
+      );
     }
   }
 
@@ -978,6 +1170,12 @@ function getEffectiveResolution({ width, height }) {
 
 function parsePositiveInteger(value) {
   const number = Number.parseInt(String(value).trim(), 10);
+
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function parsePositiveNumber(value) {
+  const number = Number.parseFloat(String(value).trim());
 
   return Number.isFinite(number) && number > 0 ? number : null;
 }
@@ -1159,8 +1357,31 @@ function isInsideDirectory(filePath, directory) {
   return Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
 }
 
-function mapYtDlpError(output) {
+function mapYtDlpError(output, options = {}) {
   const lower = output.toLowerCase();
+
+  if (
+    options.sourceSubtitle?.enabled &&
+    (lower.includes("too many requests") || lower.includes("http error 429"))
+  ) {
+    return {
+      statusCode: 503,
+      userMessage:
+        "The platform temporarily limited access to its subtitle track. Wait a few minutes and try again."
+    };
+  }
+
+  if (
+    options.sourceSubtitle?.enabled &&
+    (lower.includes("unable to download video subtitles") ||
+      lower.includes("there are no subtitles for the requested languages"))
+  ) {
+    return {
+      statusCode: 409,
+      userMessage:
+        "The selected source subtitle track is no longer available. Refresh the preview and choose an available language."
+    };
+  }
 
   if (lower.includes("no module named yt_dlp")) {
     return {
@@ -1173,8 +1394,9 @@ function mapYtDlpError(output) {
   if (lower.includes("ffmpeg")) {
     return {
       statusCode: 500,
-      userMessage:
-        "MP3 conversion needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it."
+      userMessage: options.sourceSubtitle?.enabled
+        ? "Adding source subtitles needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it."
+        : "MP3 conversion needs the app's bundled ffmpeg, but it could not be started. Re-download the portable app and check that security software did not block it."
     };
   }
 

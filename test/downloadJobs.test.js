@@ -143,7 +143,25 @@ test("cleans up expired hosted job files when cleanup is enabled", async (t) => 
     now: () => currentTime,
     downloadVideo: async (_url, _resolution, jobDownloadsDir) => {
       fs.writeFileSync(path.join(jobDownloadsDir, "temporary.mp4"), "demo");
-      return { fileName: "temporary.mp4" };
+      fs.writeFileSync(path.join(jobDownloadsDir, "temporary.en.srt"), "subtitle");
+      fs.writeFileSync(path.join(jobDownloadsDir, "temporary.en.txt"), "transcript");
+      fs.writeFileSync(path.join(jobDownloadsDir, "temporary-source.mp4"), "source");
+      return {
+        fileName: "temporary.mp4",
+        artifacts: [
+          {
+            id: "subtitles",
+            kind: "subtitles",
+            filePath: path.join(jobDownloadsDir, "temporary.en.srt")
+          },
+          {
+            id: "transcript",
+            kind: "transcript",
+            filePath: path.join(jobDownloadsDir, "temporary.en.txt")
+          }
+        ],
+        cleanupFilePaths: [path.join(jobDownloadsDir, "temporary-source.mp4")]
+      };
     }
   });
 
@@ -156,13 +174,22 @@ test("cleans up expired hosted job files when cleanup is enabled", async (t) => 
 
   await waitForJobStatus(manager, job.id, "complete");
   const filePath = path.join(downloadsDir, "temporary.mp4");
+  const subtitlePath = path.join(downloadsDir, "temporary.en.srt");
+  const transcriptPath = path.join(downloadsDir, "temporary.en.txt");
+  const sourcePath = path.join(downloadsDir, "temporary-source.mp4");
   assert.equal(fs.existsSync(filePath), true);
+  assert.equal(fs.existsSync(subtitlePath), true);
+  assert.equal(fs.existsSync(transcriptPath), true);
+  assert.equal(fs.existsSync(sourcePath), true);
 
   currentTime = new Date(2026, 5, 30, 10, 0, 2);
   manager.cleanupExpiredJobs();
 
   assert.equal(manager.getJob(job.id), null);
   assert.equal(fs.existsSync(filePath), false);
+  assert.equal(fs.existsSync(subtitlePath), false);
+  assert.equal(fs.existsSync(transcriptPath), false);
+  assert.equal(fs.existsSync(sourcePath), false);
 });
 
 function waitForJobStatus(manager, jobId, expectedStatus) {
