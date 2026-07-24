@@ -3,6 +3,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const minimumModelBytes = 400 * 1024 * 1024;
+const minimumVadModelBytes = 800 * 1024;
 
 function getWhisperPaths(options = {}) {
   const platform = options.platform || process.platform;
@@ -28,7 +29,10 @@ function getWhisperPaths(options = {}) {
     command: process.env.WHISPER_CLI_PATH || defaultCommand,
     modelPath:
       process.env.WHISPER_MODEL_PATH ||
-      path.join(whisperRoot, "models", "ggml-small.bin")
+      path.join(whisperRoot, "models", "ggml-small.bin"),
+    vadModelPath:
+      process.env.WHISPER_VAD_MODEL_PATH ||
+      path.join(whisperRoot, "models", "ggml-silero-v6.2.0.bin")
   };
 }
 
@@ -39,6 +43,7 @@ function getWhisperCommandParts(options = {}) {
     command: paths.command,
     args: [],
     modelPath: paths.modelPath,
+    vadModelPath: paths.vadModelPath,
     label: "bundled whisper.cpp Small runtime"
   };
 }
@@ -46,8 +51,11 @@ function getWhisperCommandParts(options = {}) {
 function getWhisperStatus(options = {}) {
   const commandParts = options.commandParts || getWhisperCommandParts(options);
   const modelMinimumBytes = options.minimumModelBytes ?? minimumModelBytes;
+  const vadModelMinimumBytes =
+    options.minimumVadModelBytes ?? minimumVadModelBytes;
   const command = describeFile(commandParts.command);
   const model = describeFile(commandParts.modelPath);
+  const vadModel = describeFile(commandParts.vadModelPath);
   let runtimeAvailable = false;
 
   if (command.exists) {
@@ -61,12 +69,20 @@ function getWhisperStatus(options = {}) {
 
   return {
     available:
-      runtimeAvailable && model.exists && model.size >= modelMinimumBytes,
+      runtimeAvailable &&
+      model.exists &&
+      model.size >= modelMinimumBytes &&
+      vadModel.exists &&
+      vadModel.size >= vadModelMinimumBytes,
     runtimeAvailable,
     modelAvailable: model.exists && model.size >= modelMinimumBytes,
+    vadModelAvailable:
+      vadModel.exists && vadModel.size >= vadModelMinimumBytes,
     commandPath: commandParts.command,
     modelPath: commandParts.modelPath,
-    modelSize: model.size
+    modelSize: model.size,
+    vadModelPath: commandParts.vadModelPath,
+    vadModelSize: vadModel.size
   };
 }
 
@@ -91,5 +107,6 @@ module.exports = {
   getWhisperPaths,
   getWhisperStatus,
   hasWhisper,
-  minimumModelBytes
+  minimumModelBytes,
+  minimumVadModelBytes
 };

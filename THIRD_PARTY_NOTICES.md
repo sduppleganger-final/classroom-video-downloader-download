@@ -14,6 +14,12 @@ The multilingual Whisper Small model is derived from OpenAI Whisper and is used
 locally by whisper.cpp. OpenAI Whisper is licensed under the MIT License.
 Source: https://github.com/openai/whisper
 
+## Silero VAD model
+
+The bundled ggml Silero VAD model detects spoken regions before transcription
+and is distributed under the MIT License.
+Source: https://huggingface.co/ggml-org/whisper-vad
+
 ## yt-dlp
 
 Licensed under The Unlicense. Source: https://github.com/yt-dlp/yt-dlp

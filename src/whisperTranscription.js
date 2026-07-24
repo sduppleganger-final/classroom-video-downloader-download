@@ -251,6 +251,7 @@ async function prepareWhisperCommandParts(
 
   let command = commandParts.command;
   let modelPath = commandParts.modelPath;
+  let vadModelPath = commandParts.vadModelPath;
 
   try {
     if (!isAsciiPath(command)) {
@@ -281,6 +282,12 @@ async function prepareWhisperCommandParts(
       await createTemporaryFileAlias(modelPath, targetModelPath);
       modelPath = targetModelPath;
     }
+
+    if (vadModelPath && !isAsciiPath(vadModelPath)) {
+      const targetVadModelPath = path.join(workspaceDirectory, "vad-model.bin");
+      await createTemporaryFileAlias(vadModelPath, targetVadModelPath);
+      vadModelPath = targetVadModelPath;
+    }
   } catch (error) {
     throw createWhisperError(
       "Whisper could not prepare its bundled Windows runtime.",
@@ -288,7 +295,7 @@ async function prepareWhisperCommandParts(
     );
   }
 
-  return { ...commandParts, command, modelPath };
+  return { ...commandParts, command, modelPath, vadModelPath };
 }
 
 async function createTemporaryFileAlias(sourcePath, targetPath) {
@@ -377,6 +384,7 @@ async function runWhisperTranscription(options) {
   const threads = Math.max(2, Math.min(8, Math.max(2, os.cpus().length - 1)));
   const args = buildWhisperArgs({
     modelPath: commandParts.modelPath,
+    vadModelPath: commandParts.vadModelPath,
     audioPath,
     outputPrefix,
     threads
@@ -384,6 +392,7 @@ async function runWhisperTranscription(options) {
   const startedAtMs = Date.now();
   let detectedLanguage = "";
   let lastProgress = -1;
+  const vadSegmentCollector = createVadSegmentCollector();
   const readProgress = (text) => {
     const parsed = parseWhisperOutput(text);
 
@@ -426,8 +435,12 @@ async function runWhisperTranscription(options) {
     spawnImpl,
     cancellationFilePath: audioPath,
     onStdout: readProgress,
-    onStderr: readProgress
+    onStderr: (text) => {
+      readProgress(text);
+      vadSegmentCollector.push(text);
+    }
   });
+  const speechSegments = vadSegmentCollector.finish();
 
   if (result.code !== 0) {
     throw createWhisperError("Whisper could not transcribe this video's audio.", {
@@ -457,11 +470,20 @@ async function runWhisperTranscription(options) {
     });
   }
 
-  return { language, srtPath, jsonPath };
+  if (speechSegments.length) {
+    const originalSrt = await fs.promises.readFile(srtPath, "utf8");
+    const alignedSrt = alignSrtToSpeechSegments(originalSrt, speechSegments);
+
+    if (alignedSrt !== originalSrt) {
+      await fs.promises.writeFile(srtPath, alignedSrt, "utf8");
+    }
+  }
+
+  return { language, srtPath, jsonPath, speechSegments };
 }
 
-function buildWhisperArgs({ modelPath, audioPath, outputPrefix, threads }) {
-  return [
+function buildWhisperArgs({ modelPath, vadModelPath, audioPath, outputPrefix, threads }) {
+  const args = [
     "--model",
     modelPath,
     "--file",
@@ -473,12 +495,238 @@ function buildWhisperArgs({ modelPath, audioPath, outputPrefix, threads }) {
     "--output-file",
     outputPrefix,
     "--print-progress",
+  ];
+
+  if (vadModelPath) {
+    args.push("--vad", "--vad-model", vadModelPath);
+  }
+
+  args.push(
     "--split-on-word",
     "--max-len",
     "42",
     "--threads",
     String(threads)
-  ];
+  );
+
+  return args;
+}
+
+function createVadSegmentCollector() {
+  let pending = "";
+  const segments = [];
+
+  const readLine = (line) => {
+    const match = String(line).match(
+      /VAD segment\s+\d+:\s+start\s*=\s*(\d+(?:\.\d+)?),\s+end\s*=\s*(\d+(?:\.\d+)?)/i
+    );
+
+    if (!match) {
+      return;
+    }
+
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      segments.push({ start, end });
+    }
+  };
+
+  return {
+    push(value) {
+      const lines = `${pending}${String(value || "")}`.split(/\r?\n/);
+      pending = lines.pop() || "";
+      lines.forEach(readLine);
+    },
+    finish() {
+      readLine(pending);
+      return normalizeSpeechSegments(segments);
+    }
+  };
+}
+
+function parseWhisperVadSegments(value) {
+  const collector = createVadSegmentCollector();
+  collector.push(value);
+  return collector.finish();
+}
+
+function alignSrtToSpeechSegments(srt, speechSegments, options = {}) {
+  const cues = parseSrtCues(srt);
+
+  if (!cues.length) {
+    return srt;
+  }
+
+  const mergedSpeech = mergeSpeechSegments(
+    normalizeSpeechSegments(speechSegments),
+    options.mergeGapSeconds ?? 0.4
+  );
+
+  if (!mergedSpeech.length) {
+    return srt;
+  }
+
+  const dominanceRatio = options.dominanceRatio ?? 1.5;
+  const minimumCueSeconds = options.minimumCueSeconds ?? 0.2;
+  let previousEnd = 0;
+
+  const aligned = cues.map((cue) => {
+    const overlaps = mergedSpeech
+      .map((segment) => ({
+        segment,
+        duration: Math.max(
+          0,
+          Math.min(cue.end, segment.end) - Math.max(cue.start, segment.start)
+        )
+      }))
+      .filter((overlap) => overlap.duration > 0);
+
+    if (!overlaps.length) {
+      previousEnd = Math.max(previousEnd, cue.end);
+      return cue;
+    }
+
+    const first = overlaps[0];
+    const dominant = overlaps.reduce((best, overlap) =>
+      overlap.duration > best.duration ? overlap : best
+    );
+    let start = cue.start;
+    let end = cue.end;
+
+    if (start < first.segment.start) {
+      start = first.segment.start;
+    }
+
+    if (
+      dominant !== first &&
+      dominant.segment.start - first.segment.end >= (options.mergeGapSeconds ?? 0.4) &&
+      dominant.duration >= first.duration * dominanceRatio
+    ) {
+      start = dominant.segment.start;
+    }
+
+    const last = overlaps.at(-1);
+
+    if (end > last.segment.end && end - last.segment.end >= 0.05) {
+      end = last.segment.end;
+    }
+
+    start = Math.max(start, previousEnd);
+
+    if (end <= start) {
+      end = Math.min(cue.end, start + minimumCueSeconds);
+    }
+
+    previousEnd = Math.max(previousEnd, end);
+    return { ...cue, start, end };
+  });
+
+  return formatSrtCues(aligned, String(srt).includes("\r\n") ? "\r\n" : "\n");
+}
+
+function normalizeSpeechSegments(segments) {
+  return (Array.isArray(segments) ? segments : [])
+    .map((segment) => ({
+      start: Number(segment?.start),
+      end: Number(segment?.end)
+    }))
+    .filter(
+      (segment) =>
+        Number.isFinite(segment.start) &&
+        Number.isFinite(segment.end) &&
+        segment.start >= 0 &&
+        segment.end > segment.start
+    )
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+}
+
+function mergeSpeechSegments(segments, maximumGapSeconds) {
+  const merged = [];
+
+  for (const segment of segments) {
+    const previous = merged.at(-1);
+
+    if (previous && segment.start - previous.end < maximumGapSeconds) {
+      previous.end = Math.max(previous.end, segment.end);
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+
+  return merged;
+}
+
+function parseSrtCues(srt) {
+  return String(srt || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .split(/\n{2,}/)
+    .map((block, blockIndex) => {
+      const lines = block.split("\n");
+      const index = /^\d+$/.test(lines[0]?.trim() || "")
+        ? Number(lines.shift().trim())
+        : blockIndex + 1;
+      const timing = lines.shift()?.match(
+        /^(\d{1,2}:\d{2}:\d{2}[,.]\d+)\s+-->\s+(\d{1,2}:\d{2}:\d{2}[,.]\d+)$/
+      );
+
+      if (!timing || !lines.length) {
+        return null;
+      }
+
+      return {
+        index,
+        start: parseSrtTimestamp(timing[1]),
+        end: parseSrtTimestamp(timing[2]),
+        text: lines.join("\n")
+      };
+    })
+    .filter(
+      (cue) =>
+        cue &&
+        Number.isFinite(cue.start) &&
+        Number.isFinite(cue.end) &&
+        cue.end > cue.start
+    );
+}
+
+function parseSrtTimestamp(value) {
+  const match = String(value).match(/^(\d{1,2}):(\d{2}):(\d{2})[,.](\d+)$/);
+
+  if (!match) {
+    return Number.NaN;
+  }
+
+  return (
+    Number(match[1]) * 3600 +
+    Number(match[2]) * 60 +
+    Number(match[3]) +
+    Number(`0.${match[4]}`)
+  );
+}
+
+function formatSrtCues(cues, newline) {
+  return `${cues
+    .map(
+      (cue, index) =>
+        `${index + 1}${newline}${formatSrtTimestamp(cue.start)} --> ${formatSrtTimestamp(cue.end)}${newline}${cue.text}`
+    )
+    .join(`${newline}${newline}`)}${newline}`;
+}
+
+function formatSrtTimestamp(value) {
+  const milliseconds = Math.max(0, Math.round(Number(value) * 1000));
+  const hours = Math.floor(milliseconds / 3600000);
+  const minutes = Math.floor((milliseconds % 3600000) / 60000);
+  const seconds = Math.floor((milliseconds % 60000) / 1000);
+  const remainder = milliseconds % 1000;
+
+  return [hours, minutes, seconds]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":") + `,${String(remainder).padStart(3, "0")}`;
 }
 
 function parseWhisperOutput(value) {
@@ -679,6 +927,7 @@ function reportProgress(onProgress, progress) {
 }
 
 module.exports = {
+  alignSrtToSpeechSegments,
   buildWhisperArgs,
   createCancelledWhisperError,
   createWhisperArtifacts,
@@ -688,6 +937,7 @@ module.exports = {
   formatTimeRange,
   getLanguageDisplayName,
   parseWhisperOutput,
+  parseWhisperVadSegments,
   prepareWhisperCommandParts,
   runWhisperTranscription
 };

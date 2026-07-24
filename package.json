@@ -1,6 +1,6 @@
 {
   "name": "classroom-video-downloader",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "description": "Classroom demo app for downloading videos from supported social and video URLs.",
   "main": "electron/main.js",
@@ -53,6 +53,10 @@
       {
         "from": "vendor/whisper/models/ggml-small.bin",
         "to": "whisper/models/ggml-small.bin"
+      },
+      {
+        "from": "vendor/whisper/models/ggml-silero-v6.2.0.bin",
+        "to": "whisper/models/ggml-silero-v6.2.0.bin"
       },
       {
         "from": "THIRD_PARTY_NOTICES.md",

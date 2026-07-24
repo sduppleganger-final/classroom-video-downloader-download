@@ -5,7 +5,7 @@ This project can now run in two shapes:
 - Local desktop mode: Electron opens the app on your computer and saves files locally.
 - Hosted web mode: a Node server runs `yt-dlp`, creates background download jobs, and serves temporary result files to browser users.
 
-Codex Sites can host compatible frontends, but this downloader needs a Node backend because it runs native media tools. The simplest online deployment is Docker on a service such as Render, Railway, Fly.io, Azure Container Apps, or a VPS. Desktop releases bundle `yt-dlp`, `ffmpeg`, `whisper.cpp`, and the multilingual Whisper Small model, so recipients do not need to install Python, codecs, yt-dlp, ffmpeg, or Whisper separately. The Docker image installs system `ffmpeg`; hosted Whisper additionally requires a native `whisper.cpp` runtime and model to be provisioned on the server.
+Codex Sites can host compatible frontends, but this downloader needs a Node backend because it runs native media tools. The simplest online deployment is Docker on a service such as Render, Railway, Fly.io, Azure Container Apps, or a VPS. Desktop releases bundle `yt-dlp`, `ffmpeg`, `whisper.cpp`, the multilingual Whisper Small model, and Silero voice activity detection, so recipients do not need to install Python, codecs, yt-dlp, ffmpeg, Whisper, or transcription models separately. The Docker image installs system `ffmpeg`; hosted Whisper additionally requires a native `whisper.cpp` runtime and both models to be provisioned on the server.
 
 ## Portable Windows App
 

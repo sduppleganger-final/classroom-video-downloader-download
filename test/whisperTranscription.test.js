@@ -4,18 +4,21 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
+  alignSrtToSpeechSegments,
   buildWhisperArgs,
   createCancelledWhisperError,
   createWhisperArtifacts,
   createWhisperWorkspace,
   estimateWhisperTime,
   parseWhisperOutput,
+  parseWhisperVadSegments,
   prepareWhisperCommandParts
 } = require("../src/whisperTranscription");
 
 test("builds multilingual automatic Whisper Small CLI arguments", () => {
   const args = buildWhisperArgs({
     modelPath: "model.bin",
+    vadModelPath: "vad-model.bin",
     audioPath: "audio.wav",
     outputPrefix: "transcript",
     threads: 6
@@ -32,7 +35,58 @@ test("builds multilingual automatic Whisper Small CLI arguments", () => {
   assert.equal(args.includes("--output-srt"), true);
   assert.equal(args.includes("--output-json"), true);
   assert.equal(args.includes("--print-progress"), true);
+  assert.deepEqual(
+    args.slice(args.indexOf("--vad"), args.indexOf("--vad") + 3),
+    ["--vad", "--vad-model", "vad-model.bin"]
+  );
   assert.equal(args.at(-1), "6");
+});
+
+test("parses VAD segments and aligns cues away from silent gaps", () => {
+  const speechSegments = parseWhisperVadSegments([
+    "whisper_vad_segments_from_probs: VAD segment 0: start = 8.00, end = 8.96",
+    "whisper_vad_segments_from_probs: VAD segment 1: start = 9.51, end = 25.98",
+    "whisper_vad_segments_from_probs: VAD segment 2: start = 26.15, end = 26.91",
+    "whisper_vad_segments_from_probs: VAD segment 3: start = 32.26, end = 40.29"
+  ].join("\n"));
+  const srt = [
+    "1",
+    "00:00:08,000 --> 00:00:13,150",
+    "Opening explanation",
+    "",
+    "2",
+    "00:00:25,270 --> 00:00:26,090",
+    "End of the first section",
+    "",
+    "3",
+    "00:00:26,090 --> 00:00:35,190",
+    "The next section begins after the pause",
+    ""
+  ].join("\n");
+
+  assert.deepEqual(speechSegments, [
+    { start: 8, end: 8.96 },
+    { start: 9.51, end: 25.98 },
+    { start: 26.15, end: 26.91 },
+    { start: 32.26, end: 40.29 }
+  ]);
+  assert.equal(
+    alignSrtToSpeechSegments(srt, speechSegments),
+    [
+      "1",
+      "00:00:09,510 --> 00:00:13,150",
+      "Opening explanation",
+      "",
+      "2",
+      "00:00:25,270 --> 00:00:26,090",
+      "End of the first section",
+      "",
+      "3",
+      "00:00:32,260 --> 00:00:35,190",
+      "The next section begins after the pause",
+      ""
+    ].join("\n")
+  );
 });
 
 test("parses detected language and latest Whisper progress", () => {
@@ -72,6 +126,10 @@ test("aliases Unicode Windows runtime and model paths into the ASCII workspace",
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-whisper-alias-"));
   const unicodeRuntime = path.join(tempRoot, "runtime-\u05e2\u05d1\u05e8\u05d9\u05ea");
   const unicodeModel = path.join(tempRoot, "model-\u05e2\u05d1\u05e8\u05d9\u05ea.bin");
+  const unicodeVadModel = path.join(
+    tempRoot,
+    "vad-model-\u05e2\u05d1\u05e8\u05d9\u05ea.bin"
+  );
   const workspace = path.join(tempRoot, "workspace");
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
 
@@ -80,12 +138,14 @@ test("aliases Unicode Windows runtime and model paths into the ASCII workspace",
   fs.writeFileSync(path.join(unicodeRuntime, "whisper-cli.exe"), "runtime");
   fs.writeFileSync(path.join(unicodeRuntime, "backend.dll"), "backend");
   fs.writeFileSync(unicodeModel, "model");
+  fs.writeFileSync(unicodeVadModel, "vad-model");
 
   const prepared = await prepareWhisperCommandParts(
     {
       command: path.join(unicodeRuntime, "whisper-cli.exe"),
       args: [],
-      modelPath: unicodeModel
+      modelPath: unicodeModel,
+      vadModelPath: unicodeVadModel
     },
     workspace,
     { platform: "win32" }
@@ -93,12 +153,14 @@ test("aliases Unicode Windows runtime and model paths into the ASCII workspace",
 
   assert.match(prepared.command, /^[\x20-\x7e]+$/);
   assert.match(prepared.modelPath, /^[\x20-\x7e]+$/);
+  assert.match(prepared.vadModelPath, /^[\x20-\x7e]+$/);
   assert.equal(fs.readFileSync(prepared.command, "utf8"), "runtime");
   assert.equal(
     fs.readFileSync(path.join(path.dirname(prepared.command), "backend.dll"), "utf8"),
     "backend"
   );
   assert.equal(fs.readFileSync(prepared.modelPath, "utf8"), "model");
+  assert.equal(fs.readFileSync(prepared.vadModelPath, "utf8"), "vad-model");
 });
 
 test("creates a bottom-captioned MP4, SRT, TXT, and optional original artifact", async (t) => {

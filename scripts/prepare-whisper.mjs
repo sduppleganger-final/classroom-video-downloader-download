@@ -24,12 +24,17 @@ export const WHISPER_MAC_SOURCE_SHA256 =
 export const WHISPER_SMALL_MODEL_SHA256 =
   "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b";
 export const WHISPER_SMALL_MODEL_SIZE = 487601967;
+export const WHISPER_VAD_MODEL_SHA256 =
+  "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987";
+export const WHISPER_VAD_MODEL_SIZE = 885098;
 export const WHISPER_WINDOWS_ARCHIVE_URL =
   `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP_VERSION}/whisper-bin-x64.zip`;
 export const WHISPER_MAC_SOURCE_URL =
   `https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_VERSION}.tar.gz`;
 export const WHISPER_SMALL_MODEL_URL =
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true";
+export const WHISPER_VAD_MODEL_URL =
+  "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin?download=true";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultProjectRoot = path.resolve(scriptDir, "..");
@@ -43,6 +48,9 @@ export async function prepareWhisper({
   modelUrl = WHISPER_SMALL_MODEL_URL,
   modelSha256 = WHISPER_SMALL_MODEL_SHA256,
   modelSize = WHISPER_SMALL_MODEL_SIZE,
+  vadModelUrl = WHISPER_VAD_MODEL_URL,
+  vadModelSha256 = WHISPER_VAD_MODEL_SHA256,
+  vadModelSize = WHISPER_VAD_MODEL_SIZE,
   prepareRuntimeImpl = prepareRuntime
 } = {}) {
   if (typeof fetchImpl !== "function") {
@@ -63,6 +71,11 @@ export async function prepareWhisper({
 
   const whisperRoot = path.join(projectRoot, "vendor", "whisper");
   const modelPath = path.join(whisperRoot, "models", "ggml-small.bin");
+  const vadModelPath = path.join(
+    whisperRoot,
+    "models",
+    "ggml-silero-v6.2.0.bin"
+  );
 
   await mkdir(path.dirname(modelPath), { recursive: true });
   await ensureVerifiedFile({
@@ -74,6 +87,15 @@ export async function prepareWhisper({
     logger,
     label: "Whisper Small multilingual model"
   });
+  await ensureVerifiedFile({
+    targetPath: vadModelPath,
+    url: vadModelUrl,
+    expectedSha256: vadModelSha256,
+    expectedSize: vadModelSize,
+    fetchImpl,
+    logger,
+    label: "Silero voice activity model"
+  });
 
   const runtimePath = await prepareRuntimeImpl({
     whisperRoot,
@@ -84,9 +106,10 @@ export async function prepareWhisper({
   });
 
   logger.log(`Whisper model: ${modelPath}`);
+  logger.log(`Whisper VAD model: ${vadModelPath}`);
   logger.log(`Whisper runtime: ${runtimePath}`);
 
-  return { modelPath, runtimePath };
+  return { modelPath, vadModelPath, runtimePath };
 }
 
 export async function ensureVerifiedFile({

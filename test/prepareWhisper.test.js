@@ -11,6 +11,8 @@ test("prepareWhisper installs a verified model and delegated native runtime", as
   const module = await import("../scripts/prepare-whisper.mjs");
   const model = Buffer.from("test multilingual model");
   const modelSha256 = createHash("sha256").update(model).digest("hex");
+  const vadModel = Buffer.from("test voice activity model");
+  const vadModelSha256 = createHash("sha256").update(vadModel).digest("hex");
   let runtimeRequest = null;
 
   const result = await module.prepareWhisper({
@@ -20,11 +22,15 @@ test("prepareWhisper installs a verified model and delegated native runtime", as
     modelUrl: "https://example.test/ggml-small.bin",
     modelSha256,
     modelSize: model.length,
+    vadModelUrl: "https://example.test/ggml-silero.bin",
+    vadModelSha256,
+    vadModelSize: vadModel.length,
     logger: { log() {} },
-    fetchImpl: async () => ({
+    fetchImpl: async (url) => ({
       ok: true,
       status: 200,
-      arrayBuffer: async () => model
+      arrayBuffer: async () =>
+        url.includes("silero") ? vadModel : model
     }),
     prepareRuntimeImpl: async (request) => {
       runtimeRequest = request;
@@ -38,6 +44,7 @@ test("prepareWhisper installs a verified model and delegated native runtime", as
   assert.equal(runtimeRequest.platform, "win32");
   assert.equal(runtimeRequest.arch, "x64");
   assert.deepEqual(await readFile(result.modelPath), model);
+  assert.deepEqual(await readFile(result.vadModelPath), vadModel);
   assert.match(result.runtimePath, /whisper-cli\.exe$/);
 });
 
