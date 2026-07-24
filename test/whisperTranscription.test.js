@@ -7,8 +7,10 @@ const {
   buildWhisperArgs,
   createCancelledWhisperError,
   createWhisperArtifacts,
+  createWhisperWorkspace,
   estimateWhisperTime,
-  parseWhisperOutput
+  parseWhisperOutput,
+  prepareWhisperCommandParts
 } = require("../src/whisperTranscription");
 
 test("builds multilingual automatic Whisper Small CLI arguments", () => {
@@ -53,13 +55,63 @@ test("estimates a broad local transcription time range without a duration limit"
   assert.equal(estimateWhisperTime(null), null);
 });
 
+test("creates an ASCII-only Windows workspace for the native Whisper CLI", async (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-ascii-root-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+  const workspace = await createWhisperWorkspace({
+    platform: "win32",
+    tempRoot
+  });
+
+  assert.match(workspace, /^[\x20-\x7e]+$/);
+  assert.equal(path.dirname(workspace), path.join(tempRoot, "ClassroomVideoDownloader"));
+});
+
+test("aliases Unicode Windows runtime and model paths into the ASCII workspace", async (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-whisper-alias-"));
+  const unicodeRuntime = path.join(tempRoot, "runtime-\u05e2\u05d1\u05e8\u05d9\u05ea");
+  const unicodeModel = path.join(tempRoot, "model-\u05e2\u05d1\u05e8\u05d9\u05ea.bin");
+  const workspace = path.join(tempRoot, "workspace");
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+  fs.mkdirSync(unicodeRuntime, { recursive: true });
+  fs.mkdirSync(workspace);
+  fs.writeFileSync(path.join(unicodeRuntime, "whisper-cli.exe"), "runtime");
+  fs.writeFileSync(path.join(unicodeRuntime, "backend.dll"), "backend");
+  fs.writeFileSync(unicodeModel, "model");
+
+  const prepared = await prepareWhisperCommandParts(
+    {
+      command: path.join(unicodeRuntime, "whisper-cli.exe"),
+      args: [],
+      modelPath: unicodeModel
+    },
+    workspace,
+    { platform: "win32" }
+  );
+
+  assert.match(prepared.command, /^[\x20-\x7e]+$/);
+  assert.match(prepared.modelPath, /^[\x20-\x7e]+$/);
+  assert.equal(fs.readFileSync(prepared.command, "utf8"), "runtime");
+  assert.equal(
+    fs.readFileSync(path.join(path.dirname(prepared.command), "backend.dll"), "utf8"),
+    "backend"
+  );
+  assert.equal(fs.readFileSync(prepared.modelPath, "utf8"), "model");
+});
+
 test("creates a bottom-captioned MP4, SRT, TXT, and optional original artifact", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-whisper-artifacts-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const mediaPath = path.join(directory, "Lecture - 2026-07-24_00-00-00.mp4");
+  const mediaPath = path.join(
+    directory,
+    "Lecture \u05e9\u05dc\u05d5\u05dd\uFF1A - 2026-07-24_00-00-00.mp4"
+  );
   fs.writeFileSync(mediaPath, "original-video");
   const progress = [];
   let renderOptions = null;
+  let whisperInputPaths = null;
 
   const result = await createWhisperArtifacts({
     mediaPath,
@@ -68,7 +120,8 @@ test("creates a bottom-captioned MP4, SRT, TXT, and optional original artifact",
     ffmpegCommandParts: { command: "ffmpeg", args: [] },
     whisperCommandParts: { command: "whisper", args: [], modelPath: "model" },
     extractAudioImpl: async ({ audioPath }) => fs.promises.writeFile(audioPath, "wav"),
-    runWhisperImpl: async ({ outputPrefix }) => {
+    runWhisperImpl: async ({ audioPath, outputPrefix }) => {
+      whisperInputPaths = { audioPath, outputPrefix };
       const srtPath = `${outputPrefix}.srt`;
       await fs.promises.writeFile(
         srtPath,
@@ -88,9 +141,15 @@ test("creates a bottom-captioned MP4, SRT, TXT, and optional original artifact",
     onProgress: (update) => progress.push(update)
   });
 
+  assert.doesNotMatch(whisperInputPaths.audioPath, /\u05e9|\uFF1A/);
+  assert.doesNotMatch(whisperInputPaths.outputPrefix, /\u05e9|\uFF1A/);
+  assert.equal(fs.existsSync(path.dirname(whisperInputPaths.audioPath)), false);
   assert.equal(renderOptions.captionPosition, "bottom-center");
   assert.equal(result.detectedLanguage, "he");
-  assert.equal(result.fileName, "Lecture - 2026-07-24_00-00-00 - Whisper captioned he.mp4");
+  assert.equal(
+    result.fileName,
+    "Lecture \u05e9\u05dc\u05d5\u05dd\uFF1A - 2026-07-24_00-00-00 - Whisper captioned he.mp4"
+  );
   assert.deepEqual(
     result.artifacts.map((artifact) => [artifact.id, artifact.kind]),
     [

@@ -208,7 +208,7 @@ function createApp(options = {}) {
     if (isWhisperTranscription(transcription.value) && !whisperStatus.available) {
       response.status(500).json({
         error:
-          "The bundled Whisper Small runtime or model is missing. Reinstall version 1.0.5 and try again."
+          "The bundled Whisper Small runtime or model is missing. Reinstall the latest app version and try again."
       });
       return;
     }
@@ -699,7 +699,7 @@ function downloadVideo(
     ) {
       const whisperCommandParts = options.whisperCommandParts || getWhisperCommandParts();
       const userMessage =
-        "The bundled Whisper Small runtime or model is missing. Reinstall version 1.0.5 and try again.";
+        "The bundled Whisper Small runtime or model is missing. Reinstall the latest app version and try again.";
 
       reject({
         statusCode: 500,

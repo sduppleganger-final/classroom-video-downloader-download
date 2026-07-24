@@ -187,7 +187,7 @@ async function createSourceSubtitleArtifacts(options) {
   reportProgress(onProgress, {
     percent: 96,
     stage: "subtitles",
-    message: "Rendering subtitles into the upper third of the video."
+    message: "Rendering subtitles at the bottom center of the video."
   });
 
   const captionedPath = buildCaptionedVideoPath(mediaPath, language);
@@ -202,7 +202,8 @@ async function createSourceSubtitleArtifacts(options) {
     ffmpegCommandParts,
     onProgress,
     spawnImpl,
-    timeoutMs: renderTimeoutMs
+    timeoutMs: renderTimeoutMs,
+    captionPosition: "bottom-center"
   });
 
   return {
@@ -356,7 +357,7 @@ function renderCaptionedVideo(options) {
     spawnImpl = spawn,
     timeoutMs = 2 * 60 * 60 * 1000,
     signal,
-    captionPosition = "upper-third",
+    captionPosition = "bottom-center",
     progressStart = 96,
     progressEnd = 99,
     progressStage = "subtitles",
@@ -367,9 +368,9 @@ function renderCaptionedVideo(options) {
     command: "ffmpeg",
     args: []
   };
-  const isBottomCenter = captionPosition === "bottom-center";
-  const alignment = isBottomCenter ? 2 : 6;
-  const marginV = isBottomCenter ? 24 : 96;
+  const isUpperThird = captionPosition === "upper-third";
+  const alignment = isUpperThird ? 6 : 2;
+  const marginV = isUpperThird ? 96 : 24;
   const fontSize = 18;
   const filter = buildSubtitleFilter(subtitlePath, { alignment, marginV, fontSize });
   const args = [
@@ -510,7 +511,7 @@ function renderCaptionedVideo(options) {
 
 function buildSubtitleFilter(
   subtitlePath,
-  { alignment = 6, marginV = 96, fontSize = 18 } = {}
+  { alignment = 2, marginV = 24, fontSize = 18 } = {}
 ) {
   const escapedPath = escapeFfmpegFilterPath(subtitlePath);
   const style = [

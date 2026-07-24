@@ -20,20 +20,32 @@ async function createWhisperArtifacts(options) {
     spawnImpl = spawn,
     extractAudioImpl = extractWhisperAudio,
     runWhisperImpl = runWhisperTranscription,
-    renderImpl = renderCaptionedVideo
+    renderImpl = renderCaptionedVideo,
+    createWorkspaceImpl = createWhisperWorkspace
   } = options;
   const stem = path.basename(mediaPath, path.extname(mediaPath));
   const directory = path.dirname(mediaPath);
-  const audioPath = path.join(directory, `${stem} - whisper-audio.wav`);
-  const outputPrefix = path.join(directory, `${stem} - whisper-working`);
-  const workingSrtPath = `${outputPrefix}.srt`;
-  const workingJsonPath = `${outputPrefix}.json`;
+  let workspaceDirectory = "";
+  let audioPath = "";
+  let outputPrefix = "";
+  let workingSrtPath = "";
+  let workingJsonPath = "";
+  let activeWhisperCommandParts = whisperCommandParts;
   let subtitlePath = "";
   let transcriptPath = "";
   let captionedPath = "";
 
   try {
     throwIfAborted(signal, mediaPath);
+    workspaceDirectory = await createWorkspaceImpl();
+    audioPath = path.join(workspaceDirectory, "audio.wav");
+    outputPrefix = path.join(workspaceDirectory, "transcript");
+    workingSrtPath = `${outputPrefix}.srt`;
+    workingJsonPath = `${outputPrefix}.json`;
+    activeWhisperCommandParts = await prepareWhisperCommandParts(
+      whisperCommandParts,
+      workspaceDirectory
+    );
     reportProgress(onProgress, {
       percent: 55,
       stage: "preparing-transcription",
@@ -69,14 +81,14 @@ async function createWhisperArtifacts(options) {
       duration,
       signal,
       onProgress,
-      commandParts: whisperCommandParts,
+      commandParts: activeWhisperCommandParts,
       spawnImpl
     });
     const language = normalizeLanguageCode(whisperResult.language) || "und";
     const languageName = getLanguageDisplayName(language);
 
     subtitlePath = path.join(directory, `${stem}.${language}.srt`);
-    await fs.promises.rename(whisperResult.srtPath || workingSrtPath, subtitlePath);
+    await moveGeneratedFile(whisperResult.srtPath || workingSrtPath, subtitlePath);
 
     const srt = await fs.promises.readFile(subtitlePath, "utf8");
 
@@ -139,7 +151,7 @@ async function createWhisperArtifacts(options) {
       });
     }
 
-    await removeGeneratedFiles([audioPath, workingJsonPath]);
+    await removeWhisperWorkspace(workspaceDirectory);
 
     return {
       fileName: path.basename(captionedPath),
@@ -151,19 +163,153 @@ async function createWhisperArtifacts(options) {
     };
   } catch (error) {
     await removeGeneratedFiles([
-      audioPath,
-      workingSrtPath,
-      workingJsonPath,
       subtitlePath,
       transcriptPath,
       captionedPath
     ]);
+    await removeWhisperWorkspace(workspaceDirectory);
 
     if (error?.cancelled || signal?.aborted) {
       throw createCancelledWhisperError(mediaPath, error);
     }
 
     throw error;
+  }
+}
+
+async function createWhisperWorkspace(options = {}) {
+  const platform = options.platform || process.platform;
+  const requestedRoot = options.tempRoot || process.env.CVD_WHISPER_TEMP_DIR;
+  const systemDrive = process.env.SystemDrive || "C:";
+  const candidates = requestedRoot
+    ? [requestedRoot]
+    : platform === "win32"
+      ? [
+          process.env.TEMP,
+          os.tmpdir(),
+          process.env.PUBLIC,
+          path.join(systemDrive, "Users", "Public")
+        ]
+      : [os.tmpdir()];
+  const failures = [];
+
+  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+    const resolvedRoot = path.resolve(candidate);
+
+    if (platform === "win32" && !isAsciiPath(resolvedRoot)) {
+      failures.push(`${resolvedRoot}: path contains non-ASCII characters`);
+      continue;
+    }
+
+    try {
+      const appTempRoot = path.join(resolvedRoot, "ClassroomVideoDownloader");
+      await fs.promises.mkdir(appTempRoot, { recursive: true });
+      const workspaceDirectory = await fs.promises.mkdtemp(
+        path.join(appTempRoot, "whisper-")
+      );
+
+      if (platform === "win32" && !isAsciiPath(workspaceDirectory)) {
+        await removeWhisperWorkspace(workspaceDirectory);
+        failures.push(
+          `${workspaceDirectory}: generated path contains non-ASCII characters`
+        );
+        continue;
+      }
+
+      return workspaceDirectory;
+    } catch (error) {
+      failures.push(`${resolvedRoot}: ${error.code || error.message}`);
+    }
+  }
+
+  throw createWhisperError(
+    "Whisper could not create a compatible temporary working folder.",
+    { stderr: failures.join("\n") }
+  );
+}
+
+function isAsciiPath(filePath) {
+  return /^[\x20-\x7e]+$/.test(String(filePath || ""));
+}
+
+async function prepareWhisperCommandParts(
+  commandParts,
+  workspaceDirectory,
+  options = {}
+) {
+  const platform = options.platform || process.platform;
+
+  if (platform !== "win32") {
+    return commandParts;
+  }
+
+  if (!isAsciiPath(workspaceDirectory)) {
+    throw createWhisperError(
+      "Whisper could not create a Windows-compatible working path."
+    );
+  }
+
+  let command = commandParts.command;
+  let modelPath = commandParts.modelPath;
+
+  try {
+    if (!isAsciiPath(command)) {
+      const sourceRuntimeDirectory = path.dirname(command);
+      const targetRuntimeDirectory = path.join(workspaceDirectory, "runtime");
+      await fs.promises.mkdir(targetRuntimeDirectory, { recursive: true });
+
+      const runtimeEntries = await fs.promises.readdir(sourceRuntimeDirectory, {
+        withFileTypes: true
+      });
+
+      for (const entry of runtimeEntries) {
+        if (!entry.isFile()) {
+          continue;
+        }
+
+        await createTemporaryFileAlias(
+          path.join(sourceRuntimeDirectory, entry.name),
+          path.join(targetRuntimeDirectory, entry.name)
+        );
+      }
+
+      command = path.join(targetRuntimeDirectory, path.basename(command));
+    }
+
+    if (!isAsciiPath(modelPath)) {
+      const targetModelPath = path.join(workspaceDirectory, "model.bin");
+      await createTemporaryFileAlias(modelPath, targetModelPath);
+      modelPath = targetModelPath;
+    }
+  } catch (error) {
+    throw createWhisperError(
+      "Whisper could not prepare its bundled Windows runtime.",
+      { cause: error, stderr: error.message }
+    );
+  }
+
+  return { ...commandParts, command, modelPath };
+}
+
+async function createTemporaryFileAlias(sourcePath, targetPath) {
+  try {
+    // A hard link avoids copying the 466 MiB model for every transcription.
+    await fs.promises.link(sourcePath, targetPath);
+  } catch {
+    await fs.promises.copyFile(sourcePath, targetPath);
+  }
+}
+
+async function moveGeneratedFile(sourcePath, targetPath) {
+  try {
+    await fs.promises.rename(sourcePath, targetPath);
+  } catch (error) {
+    if (error.code !== "EXDEV") {
+      throw error;
+    }
+
+    await fs.promises.copyFile(sourcePath, targetPath);
+    await fs.promises.rm(sourcePath, { force: true });
   }
 }
 
@@ -499,6 +645,16 @@ async function removeGeneratedFiles(filePaths) {
   );
 }
 
+async function removeWhisperWorkspace(workspaceDirectory) {
+  if (!workspaceDirectory) {
+    return;
+  }
+
+  await fs.promises
+    .rm(workspaceDirectory, { recursive: true, force: true })
+    .catch(() => {});
+}
+
 async function readJson(filePath) {
   try {
     return JSON.parse(await fs.promises.readFile(filePath, "utf8"));
@@ -526,10 +682,12 @@ module.exports = {
   buildWhisperArgs,
   createCancelledWhisperError,
   createWhisperArtifacts,
+  createWhisperWorkspace,
   estimateWhisperTime,
   extractWhisperAudio,
   formatTimeRange,
   getLanguageDisplayName,
   parseWhisperOutput,
+  prepareWhisperCommandParts,
   runWhisperTranscription
 };

@@ -194,21 +194,21 @@ test("renders a captioned video and returns timestamp-matched SRT and TXT artifa
     fs.readFileSync(result.artifacts[1].filePath, "utf8"),
     "שלום לכיתה\n"
   );
-  assert.match(rendererArgs.join(" "), /Alignment=6,MarginV=96,FontSize=18/);
+  assert.match(rendererArgs.join(" "), /Alignment=2,MarginV=24,FontSize=18/);
   assert.equal(progress.at(-1).percent, 99);
 });
 
-test("builds an upper-third centered libass subtitle filter", () => {
+test("builds a bottom-centered libass subtitle filter by default", () => {
   const filter = buildSubtitleFilter("C:\\Videos\\lecture.srt", {
-    marginV: 240,
+    marginV: 24,
     fontSize: 28
   });
 
   assert.match(filter, /^subtitles=filename='C\\:\/Videos\/lecture\.srt'/);
-  assert.match(filter, /Alignment=6,MarginV=240,FontSize=28/);
+  assert.match(filter, /Alignment=2,MarginV=24,FontSize=28/);
 });
 
-test("bundled ffmpeg renders source subtitles centered in the upper third", async (t) => {
+test("bundled ffmpeg renders source subtitles at the bottom center", async (t) => {
   const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-real-caption-"));
   const mediaPath = path.join(downloadsDir, "Position Test - 2026-07-23_23-10-00.mp4");
   const subtitlePath = path.join(
@@ -241,7 +241,7 @@ test("bundled ffmpeg renders source subtitles centered in the upper third", asyn
   assert.equal(fixtureResult.status, 0, fixtureResult.stderr);
   fs.writeFileSync(
     subtitlePath,
-    "1\n00:00:00,200 --> 00:00:02,800\nUPPER THIRD\n",
+    "1\n00:00:00,200 --> 00:00:02,800\nBOTTOM CENTER\n",
     "utf8"
   );
 
@@ -281,7 +281,7 @@ test("bundled ffmpeg renders source subtitles centered in the upper third", asyn
   const bounds = findLitPixelBounds(frameResult.stdout, 640, 360, 70);
 
   assert.ok(bounds.count > 100);
-  assert.ok(bounds.minY >= 95 && bounds.minY <= 155, JSON.stringify(bounds));
+  assert.ok(bounds.minY >= 280 && bounds.maxY <= 345, JSON.stringify(bounds));
   assert.ok(
     Math.abs((bounds.minX + bounds.maxX) / 2 - 320) <= 25,
     JSON.stringify(bounds)
