@@ -58,3 +58,25 @@ test("derives backend source and Whisper flags from one normalized choice", () =
   assert.equal(isWhisperTranscription(source), false);
   assert.equal(isWhisperTranscription(whisper), true);
 });
+
+test("preserves an explicit subtitle review request for video transcription", () => {
+  assert.deepEqual(
+    normalizeTranscriptionSelection(
+      { mode: "source", language: "he", review: true },
+      video
+    ).value,
+    { mode: "source", language: "he", saveOriginal: false, review: true }
+  );
+  assert.deepEqual(
+    normalizeTranscriptionSelection(
+      { mode: "whisper", saveOriginal: true, review: true },
+      video
+    ).value,
+    {
+      mode: "whisper",
+      language: "auto",
+      saveOriginal: true,
+      review: true
+    }
+  );
+});

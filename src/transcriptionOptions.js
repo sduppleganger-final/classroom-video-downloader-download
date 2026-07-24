@@ -39,7 +39,8 @@ function normalizeTranscriptionSelection(value, resolution, legacySourceSelectio
       value: {
         mode: transcriptionModes.source,
         language: source.value.language,
-        saveOriginal: false
+        saveOriginal: false,
+        ...(value?.review === true ? { review: true } : {})
       }
     };
   }
@@ -57,7 +58,8 @@ function normalizeTranscriptionSelection(value, resolution, legacySourceSelectio
       value: {
         mode: transcriptionModes.whisper,
         language: "auto",
-        saveOriginal: value?.saveOriginal !== false
+        saveOriginal: value?.saveOriginal !== false,
+        ...(value?.review === true ? { review: true } : {})
       }
     };
   }

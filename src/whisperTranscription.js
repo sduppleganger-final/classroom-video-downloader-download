@@ -21,7 +21,8 @@ async function createWhisperArtifacts(options) {
     extractAudioImpl = extractWhisperAudio,
     runWhisperImpl = runWhisperTranscription,
     renderImpl = renderCaptionedVideo,
-    createWorkspaceImpl = createWhisperWorkspace
+    createWorkspaceImpl = createWhisperWorkspace,
+    deferRender = false
   } = options;
   const stem = path.basename(mediaPath, path.extname(mediaPath));
   const directory = path.dirname(mediaPath);
@@ -99,34 +100,7 @@ async function createWhisperArtifacts(options) {
     transcriptPath = path.join(directory, `${stem}.${language}.txt`);
     await fs.promises.writeFile(transcriptPath, srtToReadableText(srt), "utf8");
 
-    reportProgress(onProgress, {
-      percent: 90,
-      stage: "rendering-transcription",
-      canCancel: true,
-      detectedLanguage: language,
-      detectedLanguageName: languageName,
-      message: `Detected ${languageName}. Rendering bottom-centered captions into the video.`
-    });
-
     captionedPath = path.join(directory, `${stem} - Whisper captioned ${language}.mp4`);
-    await renderImpl({
-      inputPath: mediaPath,
-      subtitlePath,
-      outputPath: captionedPath,
-      duration,
-      ffmpegCommandParts,
-      signal,
-      captionPosition: "bottom-center",
-      progressStart: 90,
-      progressEnd: 99,
-      progressStage: "rendering-transcription",
-      progressMessage: "Rendering Whisper captions into the video",
-      completionMessage: "Finalizing the Whisper video, SRT, and TXT files.",
-      timeoutMs: 0,
-      onProgress,
-      spawnImpl
-    });
-
     const artifacts = [
       {
         id: "subtitles",
@@ -150,6 +124,68 @@ async function createWhisperArtifacts(options) {
         filePath: mediaPath
       });
     }
+
+    if (deferRender) {
+      reportProgress(onProgress, {
+        percent: 90,
+        stage: "subtitle-review",
+        canCancel: false,
+        detectedLanguage: language,
+        detectedLanguageName: languageName,
+        message: `Detected ${languageName}. The subtitles are ready to review and correct.`
+      });
+      await removeWhisperWorkspace(workspaceDirectory);
+
+      return {
+        fileName: path.basename(mediaPath),
+        filePath: mediaPath,
+        artifacts: [],
+        cleanupFilePaths: [],
+        detectedLanguage: language,
+        detectedLanguageName: languageName,
+        review: {
+          mode: "whisper",
+          mediaPath,
+          subtitlePath,
+          transcriptPath,
+          outputPath: captionedPath,
+          language,
+          languageName,
+          duration,
+          width: options.width,
+          height: options.height,
+          artifacts,
+          cleanupFilePaths: saveOriginal ? [] : [mediaPath]
+        }
+      };
+    }
+
+    reportProgress(onProgress, {
+      percent: 90,
+      stage: "rendering-transcription",
+      canCancel: true,
+      detectedLanguage: language,
+      detectedLanguageName: languageName,
+      message: `Detected ${languageName}. Rendering bottom-centered captions into the video.`
+    });
+
+    await renderImpl({
+      inputPath: mediaPath,
+      subtitlePath,
+      outputPath: captionedPath,
+      duration,
+      ffmpegCommandParts,
+      signal,
+      captionPosition: "bottom-center",
+      progressStart: 90,
+      progressEnd: 99,
+      progressStage: "rendering-transcription",
+      progressMessage: "Rendering Whisper captions into the video",
+      completionMessage: "Finalizing the Whisper video, SRT, and TXT files.",
+      timeoutMs: 0,
+      onProgress,
+      spawnImpl
+    });
 
     await removeWhisperWorkspace(workspaceDirectory);
 

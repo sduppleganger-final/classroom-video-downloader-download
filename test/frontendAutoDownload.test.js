@@ -140,3 +140,25 @@ test("frontend offers local Whisper with estimates, original-video retention, an
   assert.match(stylesCss, /\.whisper-estimate/);
   assert.match(stylesCss, /\.cancel-transcription-button/);
 });
+
+test("frontend offers synchronized subtitle correction and appearance controls before rendering", () => {
+  const indexHtml = fs.readFileSync(path.join(projectRoot, "public", "index.html"), "utf8");
+  const appJs = fs.readFileSync(path.join(projectRoot, "public", "app.js"), "utf8");
+  const stylesCss = fs.readFileSync(path.join(projectRoot, "public", "styles.css"), "utf8");
+
+  assert.match(indexHtml, /id="review-subtitles"[\s\S]*type="checkbox"[\s\S]*checked/);
+  assert.match(indexHtml, /id="subtitle-editor-video"/);
+  assert.match(indexHtml, /id="subtitle-cue-list"/);
+  assert.match(indexHtml, /name="subtitlePosition"/);
+  assert.match(indexHtml, /id="subtitle-font-size"[\s\S]*type="range"/);
+  assert.match(indexHtml, /id="subtitle-color"[\s\S]*type="color"/);
+  assert.match(indexHtml, /id="generate-captioned-video-button"/);
+  assert.match(appJs, /job\.status === "review"/);
+  assert.match(appJs, /syncSubtitleCueToPlayback/);
+  assert.match(appJs, /cueEdits: session\.cues\.map/);
+  assert.match(appJs, /\/finalize/);
+  assert.match(appJs, /style: session\.style/);
+  assert.match(stylesCss, /\.subtitle-video-stage\[data-position="bottom-center"\]/);
+  assert.match(stylesCss, /\.subtitle-cue-row\.is-active/);
+  assert.match(stylesCss, /--preview-subtitle-color/);
+});

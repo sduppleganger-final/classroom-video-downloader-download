@@ -198,6 +198,47 @@ test("renders a captioned video and returns timestamp-matched SRT and TXT artifa
   assert.equal(progress.at(-1).percent, 99);
 });
 
+test("defers source subtitle rendering for an editable review session", async (t) => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-source-review-"));
+  const mediaPath = path.join(downloadsDir, "Lecture - 2026-07-24_10-00-00.mp4");
+  const subtitlePath = path.join(
+    downloadsDir,
+    "Lecture - 2026-07-24_10-00-00.en.srt"
+  );
+  let rendererStarted = false;
+
+  t.after(() => fs.rmSync(downloadsDir, { recursive: true, force: true }));
+  fs.writeFileSync(mediaPath, "video");
+  fs.writeFileSync(
+    subtitlePath,
+    "1\n00:00:00,000 --> 00:00:02,000\nEditable source cue\n",
+    "utf8"
+  );
+
+  const result = await createSourceSubtitleArtifacts({
+    downloadsDir,
+    mediaPath,
+    language: "en",
+    width: 1280,
+    height: 720,
+    duration: 20,
+    startedAtMs: Date.now() - 1000,
+    deferRender: true,
+    spawnImpl: () => {
+      rendererStarted = true;
+      throw new Error("rendering should be deferred");
+    }
+  });
+
+  assert.equal(rendererStarted, false);
+  assert.equal(result.filePath, mediaPath);
+  assert.deepEqual(result.artifacts, []);
+  assert.equal(result.review.mode, "source");
+  assert.equal(result.review.subtitlePath, subtitlePath);
+  assert.equal(fs.readFileSync(result.review.transcriptPath, "utf8"), "Editable source cue\n");
+  assert.equal(result.review.artifacts.length, 2);
+});
+
 test("builds a bottom-centered libass subtitle filter by default", () => {
   const filter = buildSubtitleFilter("C:\\Videos\\lecture.srt", {
     marginV: 24,
@@ -367,6 +408,83 @@ test("bundled ffmpeg renders Whisper captions at the bottom center", async (t) =
   );
 });
 
+test("bundled ffmpeg applies a custom top-left size and color", async (t) => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-custom-caption-"));
+  const mediaPath = path.join(downloadsDir, "custom-position.mp4");
+  const subtitlePath = path.join(downloadsDir, "custom-position.en.srt");
+  const outputPath = path.join(downloadsDir, "custom-position-captioned.mp4");
+
+  t.after(() => fs.rmSync(downloadsDir, { recursive: true, force: true }));
+
+  const fixtureResult = spawnSync(
+    ffmpeg,
+    [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=640x360:d=2",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      mediaPath
+    ],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(fixtureResult.status, 0, fixtureResult.stderr);
+  fs.writeFileSync(
+    subtitlePath,
+    "1\n00:00:00,100 --> 00:00:01,900\nCUSTOM CAPTION\n",
+    "utf8"
+  );
+
+  await renderCaptionedVideo({
+    inputPath: mediaPath,
+    subtitlePath,
+    outputPath,
+    width: 640,
+    height: 360,
+    duration: 2,
+    captionStyle: { position: "top-left", fontSize: 32, color: "#FFCC00" },
+    ffmpegCommandParts: { command: ffmpeg, args: [] }
+  });
+
+  const frameResult = spawnSync(
+    ffmpeg,
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-ss",
+      "1",
+      "-i",
+      outputPath,
+      "-frames:v",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "pipe:1"
+    ],
+    { encoding: null, maxBuffer: 640 * 360 * 4 }
+  );
+
+  assert.equal(frameResult.status, 0, frameResult.stderr?.toString());
+
+  const bounds = findYellowPixelBounds(frameResult.stdout, 640, 360);
+
+  assert.ok(bounds.count > 100, JSON.stringify(bounds));
+  assert.ok(bounds.minX >= 20 && bounds.minX < 100, JSON.stringify(bounds));
+  assert.ok(bounds.maxX < 420, JSON.stringify(bounds));
+  assert.ok(bounds.minY >= 15 && bounds.maxY < 100, JSON.stringify(bounds));
+});
+
 function findLitPixelBounds(pixels, width, height, threshold) {
   const bounds = {
     minX: width,
@@ -379,6 +497,37 @@ function findLitPixelBounds(pixels, width, height, threshold) {
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       if (pixels[y * width + x] <= threshold) {
+        continue;
+      }
+
+      bounds.minX = Math.min(bounds.minX, x);
+      bounds.maxX = Math.max(bounds.maxX, x);
+      bounds.minY = Math.min(bounds.minY, y);
+      bounds.maxY = Math.max(bounds.maxY, y);
+      bounds.count += 1;
+    }
+  }
+
+  return bounds;
+}
+
+function findYellowPixelBounds(pixels, width, height) {
+  const bounds = {
+    minX: width,
+    maxX: -1,
+    minY: height,
+    maxY: -1,
+    count: 0
+  };
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 3;
+      const red = pixels[index];
+      const green = pixels[index + 1];
+      const blue = pixels[index + 2];
+
+      if (red < 160 || green < 110 || blue > 100) {
         continue;
       }
 

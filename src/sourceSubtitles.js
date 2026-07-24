@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+const { getSubtitleRenderStyle } = require("./subtitleStyle");
 
 const sourceSubtitleKinds = {
   manual: "manual",
@@ -157,7 +158,8 @@ async function createSourceSubtitleArtifacts(options) {
     ffmpegCommandParts,
     onProgress,
     spawnImpl,
-    renderTimeoutMs
+    renderTimeoutMs,
+    deferRender = false
   } = options;
   const subtitlePath = findDownloadedSubtitleFile({
     downloadsDir,
@@ -184,13 +186,56 @@ async function createSourceSubtitleArtifacts(options) {
 
   await fs.promises.writeFile(transcriptPath, readableTranscript, "utf8");
 
+  const captionedPath = buildCaptionedVideoPath(mediaPath, language);
+  const artifacts = [
+    {
+      id: "subtitles",
+      kind: "subtitles",
+      fileName: path.basename(subtitlePath),
+      filePath: subtitlePath
+    },
+    {
+      id: "transcript",
+      kind: "transcript",
+      fileName: path.basename(transcriptPath),
+      filePath: transcriptPath
+    }
+  ];
+
+  if (deferRender) {
+    reportProgress(onProgress, {
+      percent: 90,
+      stage: "subtitle-review",
+      message: "The source subtitles are ready to review and correct."
+    });
+
+    return {
+      fileName: path.basename(mediaPath),
+      filePath: mediaPath,
+      artifacts: [],
+      cleanupFilePaths: [],
+      review: {
+        mode: "source",
+        mediaPath,
+        subtitlePath,
+        transcriptPath,
+        outputPath: captionedPath,
+        language,
+        languageName: language,
+        duration,
+        width,
+        height,
+        artifacts,
+        cleanupFilePaths: [mediaPath]
+      }
+    };
+  }
+
   reportProgress(onProgress, {
     percent: 96,
     stage: "subtitles",
     message: "Rendering subtitles at the bottom center of the video."
   });
-
-  const captionedPath = buildCaptionedVideoPath(mediaPath, language);
 
   await renderCaptionedVideo({
     inputPath: mediaPath,
@@ -209,20 +254,7 @@ async function createSourceSubtitleArtifacts(options) {
   return {
     fileName: path.basename(captionedPath),
     filePath: captionedPath,
-    artifacts: [
-      {
-        id: "subtitles",
-        kind: "subtitles",
-        fileName: path.basename(subtitlePath),
-        filePath: subtitlePath
-      },
-      {
-        id: "transcript",
-        kind: "transcript",
-        fileName: path.basename(transcriptPath),
-        filePath: transcriptPath
-      }
-    ],
+    artifacts,
     cleanupFilePaths: [mediaPath]
   };
 }
@@ -369,10 +401,16 @@ function renderCaptionedVideo(options) {
     args: []
   };
   const isUpperThird = captionPosition === "upper-third";
-  const alignment = isUpperThird ? 6 : 2;
-  const marginV = isUpperThird ? 96 : 24;
-  const fontSize = 18;
-  const filter = buildSubtitleFilter(subtitlePath, { alignment, marginV, fontSize });
+  const captionStyle = options.captionStyle || {
+    position: isUpperThird ? "top-center" : "bottom-center",
+    fontSize: 18,
+    color: "#FFFFFF"
+  };
+  const renderStyle = getSubtitleRenderStyle(captionStyle);
+  const filter = buildSubtitleFilter(subtitlePath, {
+    ...renderStyle,
+    marginV: isUpperThird && !options.captionStyle ? 96 : renderStyle.marginV
+  });
   const args = [
     ...(Array.isArray(commandParts.args) ? commandParts.args : []),
     "-y",
@@ -511,13 +549,23 @@ function renderCaptionedVideo(options) {
 
 function buildSubtitleFilter(
   subtitlePath,
-  { alignment = 2, marginV = 24, fontSize = 18 } = {}
+  {
+    alignment = 2,
+    marginV = 24,
+    fontSize = 18,
+    primaryColour = "&H00FFFFFF",
+    marginL = 32,
+    marginR = 32
+  } = {}
 ) {
   const escapedPath = escapeFfmpegFilterPath(subtitlePath);
   const style = [
     `Alignment=${alignment}`,
     `MarginV=${marginV}`,
     `FontSize=${fontSize}`,
+    `PrimaryColour=${primaryColour}`,
+    `MarginL=${marginL}`,
+    `MarginR=${marginR}`,
     "Outline=2",
     "Shadow=1",
     "WrapStyle=2"

@@ -462,6 +462,124 @@ test("direct Whisper cancellation keeps and exposes the downloaded original vide
   );
 });
 
+test("direct mode serves a protected subtitle editor and finalizes its corrected video", async (t) => {
+  const workingDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-review-working-"));
+  const finalDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-review-final-"));
+  let finalizerRequest;
+
+  t.after(() => {
+    fs.rmSync(workingDownloadsDir, { recursive: true, force: true });
+    fs.rmSync(finalDownloadsDir, { recursive: true, force: true });
+  });
+
+  const app = createApp({
+    hostedMode: false,
+    downloadsDir: workingDownloadsDir,
+    finalDownloadsDir,
+    startCleanupTimer: false,
+    downloadVideo: async (_url, _resolution, downloadsDir, options) => {
+      assert.equal(options.deferSubtitleReview, true);
+      const mediaPath = path.join(downloadsDir, "lecture.mp4");
+      const subtitlePath = path.join(downloadsDir, "lecture.en.srt");
+      const transcriptPath = path.join(downloadsDir, "lecture.en.txt");
+
+      fs.writeFileSync(mediaPath, "review-video");
+      fs.writeFileSync(
+        subtitlePath,
+        "1\n00:00:00,500 --> 00:00:02,500\nOriginal cue\n",
+        "utf8"
+      );
+      fs.writeFileSync(transcriptPath, "Original cue\n");
+
+      return {
+        fileName: path.basename(mediaPath),
+        filePath: mediaPath,
+        review: {
+          mode: "source",
+          mediaPath,
+          subtitlePath,
+          transcriptPath,
+          outputPath: path.join(downloadsDir, "lecture-captioned.mp4"),
+          language: "en",
+          languageName: "English",
+          duration: 15,
+          width: 1280,
+          height: 720,
+          artifacts: [
+            { id: "subtitles", kind: "subtitles", filePath: subtitlePath },
+            { id: "transcript", kind: "transcript", filePath: transcriptPath }
+          ],
+          cleanupFilePaths: [mediaPath]
+        }
+      };
+    },
+    finalizeSubtitleReview: async (request) => {
+      finalizerRequest = request;
+      fs.writeFileSync(request.review.outputPath, "corrected-captioned-video");
+      fs.writeFileSync(request.review.subtitlePath, "corrected-srt");
+      fs.writeFileSync(request.review.transcriptPath, "corrected-transcript");
+      return {
+        fileName: path.basename(request.review.outputPath),
+        filePath: request.review.outputPath,
+        artifacts: request.review.artifacts,
+        cleanupFilePaths: request.review.cleanupFilePaths
+      };
+    }
+  });
+  const server = await listen(app);
+  t.after(() => {
+    app.locals.downloadJobs.stopCleanupTimer();
+    server.close();
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const createdResponse = await fetch(`${baseUrl}/api/download`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      resolution: "best",
+      transcription: { mode: "source", language: "en", review: true }
+    })
+  });
+  const created = await createdResponse.json();
+
+  assert.equal(createdResponse.status, 202);
+  const review = await waitForLocalJob(baseUrl, created.jobId, "review");
+  assert.equal(review.review.cues[0].text, "Original cue");
+
+  const deniedMedia = await fetch(
+    `${baseUrl}/api/downloads/${created.jobId}/review-media?token=wrong`
+  );
+  assert.equal(deniedMedia.status, 403);
+
+  const mediaResponse = await fetch(`${baseUrl}${review.review.mediaUrl}`);
+  assert.equal(mediaResponse.status, 200);
+  assert.equal(await mediaResponse.text(), "review-video");
+
+  const finalizeResponse = await fetch(
+    `${baseUrl}/api/downloads/${created.jobId}/finalize`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: review.review.token,
+        cueEdits: [{ id: "1", text: "Corrected cue" }],
+        style: { position: "top-left", fontSize: 26, color: "#FFCC00" }
+      })
+    }
+  );
+  assert.equal(finalizeResponse.status, 202);
+
+  const complete = await waitForLocalJob(baseUrl, created.jobId, "complete");
+  assert.equal(fs.readFileSync(complete.savedPath, "utf8"), "corrected-captioned-video");
+  assert.deepEqual(finalizerRequest.cueEdits, [{ id: "1", text: "Corrected cue" }]);
+  assert.deepEqual(finalizerRequest.style, {
+    position: "top-left",
+    fontSize: 26,
+    color: "#FFCC00"
+  });
+});
+
 test("direct desktop mode returns diagnostic logs for failed downloads", async (t) => {
   const workingDownloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-working-"));
 

@@ -253,6 +253,125 @@ test("cancels active Whisper transcription and preserves the downloaded original
   assert.equal(fs.readFileSync(originalPath, "utf8"), "original-video");
 });
 
+test("protects subtitle review media and finalizes corrected cues after a retry", async (t) => {
+  const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), "video-review-jobs-"));
+  const mediaPath = path.join(downloadsDir, "lecture.mp4");
+  const subtitlePath = path.join(downloadsDir, "lecture.en.srt");
+  const transcriptPath = path.join(downloadsDir, "lecture.en.txt");
+  const outputPath = path.join(downloadsDir, "lecture-captioned.mp4");
+  let failRendering = true;
+  let finalizeRequest;
+
+  t.after(() => fs.rmSync(downloadsDir, { recursive: true, force: true }));
+
+  const manager = createDownloadJobManager({
+    downloadsDir,
+    startCleanupTimer: false,
+    downloadVideo: async (_url, _resolution, _jobDownloadsDir, options = {}) => {
+      assert.equal(options.deferSubtitleReview, true);
+      fs.writeFileSync(mediaPath, "video");
+      fs.writeFileSync(
+        subtitlePath,
+        "1\n00:00:00,000 --> 00:00:02,000\nOriginal cue\n",
+        "utf8"
+      );
+      fs.writeFileSync(transcriptPath, "Original cue\n");
+      return {
+        fileName: path.basename(mediaPath),
+        filePath: mediaPath,
+        review: {
+          mode: "source",
+          mediaPath,
+          subtitlePath,
+          transcriptPath,
+          outputPath,
+          language: "en",
+          languageName: "English",
+          duration: 10,
+          width: 1280,
+          height: 720,
+          artifacts: [
+            { id: "subtitles", kind: "subtitles", filePath: subtitlePath },
+            { id: "transcript", kind: "transcript", filePath: transcriptPath }
+          ],
+          cleanupFilePaths: [mediaPath]
+        }
+      };
+    },
+    finalizeSubtitleReview: async (request) => {
+      finalizeRequest = request;
+
+      if (failRendering) {
+        throw Object.assign(new Error("renderer failed"), {
+          userMessage: "The corrected subtitles could not be rendered.",
+          diagnosticLog: "renderer diagnostic"
+        });
+      }
+
+      fs.writeFileSync(outputPath, "captioned-video");
+      return {
+        fileName: path.basename(outputPath),
+        filePath: outputPath,
+        artifacts: request.review.artifacts,
+        cleanupFilePaths: request.review.cleanupFilePaths
+      };
+    }
+  });
+  const created = manager.createJob({
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    resolution: { label: "Best available" },
+    transcription: { mode: "source", language: "en", review: true }
+  });
+  const reviewJob = await waitForJobStatus(manager, created.id, "review");
+
+  assert.equal(reviewJob.review.cues[0].text, "Original cue");
+  assert.match(reviewJob.review.mediaUrl, /review-media\?token=/);
+  assert.equal(manager.getReviewMediaPath(created.id, "wrong-token"), null);
+  assert.equal(
+    manager.getReviewMediaPath(created.id, reviewJob.review.token),
+    mediaPath
+  );
+  assert.equal(
+    manager.finalizeReview(created.id, {
+      token: "wrong-token",
+      cueEdits: [{ id: "1", text: "Corrected cue" }],
+      style: { position: "top-right", fontSize: 30, color: "#33CC66" }
+    }).statusCode,
+    403
+  );
+
+  const firstAttempt = manager.finalizeReview(created.id, {
+    token: reviewJob.review.token,
+    cueEdits: [{ id: "1", text: "Corrected cue" }],
+    style: { position: "top-right", fontSize: 30, color: "#33CC66" }
+  });
+  assert.equal(firstAttempt.ok, true);
+  const retryJob = await waitForJobStatus(manager, created.id, "review");
+
+  assert.equal(retryJob.error, "The corrected subtitles could not be rendered.");
+  assert.equal(retryJob.review.cues[0].text, "Corrected cue");
+  assert.match(retryJob.diagnosticLog, /renderer diagnostic/);
+
+  failRendering = false;
+  const retry = manager.finalizeReview(created.id, {
+    token: retryJob.review.token,
+    cueEdits: [{ id: "1", text: "Corrected cue" }],
+    style: { position: "top-right", fontSize: 30, color: "#33CC66" }
+  });
+  assert.equal(retry.ok, true);
+
+  const complete = await waitForJobStatus(manager, created.id, "complete");
+  assert.equal(complete.fileName, "lecture-captioned.mp4");
+  assert.equal(complete.review, null);
+  assert.match(complete.downloadUrl, /\/file\?token=/);
+  assert.deepEqual(finalizeRequest.cueEdits, [{ id: "1", text: "Corrected cue" }]);
+  assert.deepEqual(finalizeRequest.style, {
+    position: "top-right",
+    fontSize: 30,
+    color: "#33CC66"
+  });
+});
+
 function waitForJobStatus(manager, jobId, expectedStatus) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 1000;

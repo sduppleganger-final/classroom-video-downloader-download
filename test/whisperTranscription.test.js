@@ -224,6 +224,54 @@ test("creates a bottom-captioned MP4, SRT, TXT, and optional original artifact",
   assert.equal(progress.some((update) => update.detectedLanguage === "he"), true);
 });
 
+test("defers Whisper rendering and preserves review artifacts after transcription", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-whisper-review-"));
+  const mediaPath = path.join(directory, "review.mp4");
+  let rendererStarted = false;
+
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(mediaPath, "original-video");
+
+  const result = await createWhisperArtifacts({
+    mediaPath,
+    duration: 45,
+    width: 1280,
+    height: 720,
+    saveOriginal: true,
+    deferRender: true,
+    ffmpegCommandParts: { command: "ffmpeg", args: [] },
+    whisperCommandParts: { command: "whisper", args: [], modelPath: "model" },
+    extractAudioImpl: async ({ audioPath }) => fs.promises.writeFile(audioPath, "wav"),
+    runWhisperImpl: async ({ outputPrefix }) => {
+      const srtPath = `${outputPrefix}.srt`;
+      await fs.promises.writeFile(
+        srtPath,
+        "1\n00:00:01,000 --> 00:00:03,000\nEditable Whisper cue\n",
+        "utf8"
+      );
+      return { language: "en", srtPath };
+    },
+    renderImpl: async () => {
+      rendererStarted = true;
+    }
+  });
+
+  assert.equal(rendererStarted, false);
+  assert.equal(result.filePath, mediaPath);
+  assert.equal(result.review.mode, "whisper");
+  assert.equal(result.review.language, "en");
+  assert.equal(result.review.width, 1280);
+  assert.equal(result.review.height, 720);
+  assert.deepEqual(
+    result.review.artifacts.map((artifact) => artifact.kind),
+    ["subtitles", "transcript", "original-video"]
+  );
+  assert.equal(
+    fs.readFileSync(result.review.transcriptPath, "utf8"),
+    "Editable Whisper cue\n"
+  );
+});
+
 test("cancellation removes partial transcript files and preserves the original video", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-whisper-cancel-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

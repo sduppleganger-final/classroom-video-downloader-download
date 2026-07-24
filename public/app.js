@@ -17,6 +17,8 @@ const subtitleAvailability = document.querySelector("#subtitle-availability");
 const whisperOptions = document.querySelector("#whisper-options");
 const saveOriginalVideoCheckbox = document.querySelector("#save-original-video");
 const whisperEstimate = document.querySelector("#whisper-estimate");
+const subtitleReviewOption = document.querySelector("#subtitle-review-option");
+const reviewSubtitlesCheckbox = document.querySelector("#review-subtitles");
 const previewPanel = document.querySelector(".preview-panel");
 const previewVideo = document.querySelector("#preview-video");
 const previewTitle = document.querySelector("#preview-title");
@@ -38,6 +40,23 @@ const diagnosticLog = document.querySelector("#diagnostic-log");
 const diagnosticCopyStatus = document.querySelector("#diagnostic-copy-status");
 const copyLogButton = document.querySelector("#copy-log-button");
 const downloadLogButton = document.querySelector("#download-log-button");
+const subtitleEditor = document.querySelector("#subtitle-editor");
+const subtitleEditorMeta = document.querySelector("#subtitle-editor-meta");
+const subtitleVideoStage = document.querySelector("#subtitle-video-stage");
+const subtitleEditorVideo = document.querySelector("#subtitle-editor-video");
+const subtitleOverlay = document.querySelector("#subtitle-overlay");
+const subtitlePositionInputs = [
+  ...document.querySelectorAll('input[name="subtitlePosition"]')
+];
+const subtitleFontSizeInput = document.querySelector("#subtitle-font-size");
+const subtitleFontSizeOutput = document.querySelector("#subtitle-font-size-output");
+const subtitleColorInput = document.querySelector("#subtitle-color");
+const subtitleColorOutput = document.querySelector("#subtitle-color-output");
+const subtitleCueCount = document.querySelector("#subtitle-cue-count");
+const subtitleCueList = document.querySelector("#subtitle-cue-list");
+const generateCaptionedVideoButton = document.querySelector(
+  "#generate-captioned-video-button"
+);
 const apiBaseUrl = normalizeBaseUrl(window.CLASSROOM_VIDEO_API_BASE_URL || "");
 
 let previewDebounce;
@@ -55,6 +74,10 @@ let subtitlePreviewUrl = "";
 let currentPreviewDuration = null;
 let currentDownloadJobId = "";
 let cancellingTranscription = false;
+let currentSubtitleReview = null;
+let activeSubtitleCueId = "";
+let subtitleCueRows = new Map();
+let subtitleEditorResizeObserver = null;
 let appConfig = {
   hostedMode: false,
   accessCodeRequired: false,
@@ -73,11 +96,30 @@ transcriptionModeInputs.forEach((input) => {
   input.addEventListener("change", handleTranscriptionModeChange);
 });
 cancelTranscriptionButton.addEventListener("click", cancelActiveTranscription);
+generateCaptionedVideoButton.addEventListener("click", finalizeSubtitleReviewSession);
+subtitleEditorVideo.addEventListener("timeupdate", syncSubtitleCueToPlayback);
+subtitleEditorVideo.addEventListener("seeked", syncSubtitleCueToPlayback);
+subtitleEditorVideo.addEventListener("loadedmetadata", updateSubtitleStylePreview);
+subtitleEditorVideo.addEventListener("error", () => {
+  if (currentSubtitleReview) {
+    setState(
+      "error",
+      "Preview unavailable",
+      "The downloaded video could not be opened in the editor. Your subtitle edits are still available."
+    );
+  }
+});
+subtitlePositionInputs.forEach((input) => {
+  input.addEventListener("change", updateSubtitleStylePreview);
+});
+subtitleFontSizeInput.addEventListener("input", updateSubtitleStylePreview);
+subtitleColorInput.addEventListener("input", updateSubtitleStylePreview);
 window.addEventListener("native-download-complete", (event) => {
   const fileName = event.detail?.fileName || "the file";
   const filePath = event.detail?.filePath;
   const location = filePath ? `Saved to ${filePath}.` : "Saved to your Downloads folder.";
 
+  closeSubtitleEditor();
   finishDownloadSession("Saved to your computer.");
   setState("success", "Saved", `${fileName} has been saved. ${location}`);
   showFileLocationAction(filePath);
@@ -121,14 +163,7 @@ form.addEventListener("submit", async (event) => {
   startDownloadSession(progressDetail);
   setState("loading", action, `Finding and downloading ${resolutionLabel.toLowerCase()}...`);
 
-  button.disabled = true;
-  resolutionSelect.disabled = true;
-  accessCodeInput.disabled = true;
-  transcriptionModeInputs.forEach((input) => {
-    input.disabled = true;
-  });
-  subtitleLanguageSelect.disabled = true;
-  saveOriginalVideoCheckbox.disabled = true;
+  setDownloadFormLocked(true);
 
   try {
     const response = await fetchWithClassroomAccess(apiUrl("/api/download"), {
@@ -161,13 +196,7 @@ form.addEventListener("submit", async (event) => {
     showDiagnosticLog(error);
     setState("error", "Error", error.message);
   } finally {
-    button.disabled = false;
-    resolutionSelect.disabled = false;
-    accessCodeInput.disabled = false;
-    syncSourceTranscriptionForResolution();
-    subtitleLanguageSelect.disabled =
-      subtitleLanguageField.hidden || !sourceTranscriptionCheckbox.checked;
-    saveOriginalVideoCheckbox.disabled = !whisperTranscriptionRadio.checked;
+    setDownloadFormLocked(Boolean(currentSubtitleReview));
   }
 });
 
@@ -229,10 +258,18 @@ function syncSourceTranscriptionForResolution() {
   subtitleAvailability.textContent = "Transcription is available for video downloads only.";
   hideSubtitleLanguageField();
   whisperOptions.hidden = true;
+  subtitleReviewOption.hidden = true;
+  reviewSubtitlesCheckbox.disabled = true;
 }
 
 function handleTranscriptionModeChange() {
+  const canReview =
+    resolutionSelect.value !== "mp3" &&
+    (sourceTranscriptionCheckbox.checked || whisperTranscriptionRadio.checked);
+
   whisperOptions.hidden = !whisperTranscriptionRadio.checked;
+  subtitleReviewOption.hidden = !canReview;
+  reviewSubtitlesCheckbox.disabled = !canReview || button.disabled;
   saveOriginalVideoCheckbox.disabled =
     !whisperTranscriptionRadio.checked || button.disabled;
 
@@ -312,7 +349,8 @@ function getTranscriptionRequest() {
       ok: true,
       value: {
         mode: "whisper",
-        saveOriginal: saveOriginalVideoCheckbox.checked
+        saveOriginal: saveOriginalVideoCheckbox.checked,
+        review: reviewSubtitlesCheckbox.checked
       }
     };
   }
@@ -345,9 +383,32 @@ function getTranscriptionRequest() {
     ok: true,
     value: {
       mode: "source",
-      language: subtitleLanguageSelect.value
+      language: subtitleLanguageSelect.value,
+      review: reviewSubtitlesCheckbox.checked
     }
   };
+}
+
+function setDownloadFormLocked(locked) {
+  button.disabled = locked;
+  resolutionSelect.disabled = locked;
+  accessCodeInput.disabled = locked;
+
+  if (locked) {
+    transcriptionModeInputs.forEach((input) => {
+      input.disabled = true;
+    });
+    subtitleLanguageSelect.disabled = true;
+    saveOriginalVideoCheckbox.disabled = true;
+    reviewSubtitlesCheckbox.disabled = true;
+    return;
+  }
+
+  syncSourceTranscriptionForResolution();
+  subtitleLanguageSelect.disabled =
+    subtitleLanguageField.hidden || !sourceTranscriptionCheckbox.checked;
+  saveOriginalVideoCheckbox.disabled = !whisperTranscriptionRadio.checked;
+  reviewSubtitlesCheckbox.disabled = subtitleReviewOption.hidden;
 }
 
 function showSubtitleLanguageChoices(languages) {
@@ -476,6 +537,348 @@ function stopDownloadSession() {
   downloadProgressPercent.textContent = "0%";
   downloadProgressTrack.setAttribute("aria-valuenow", "0");
   downloadProgressDetail.textContent = "Preparing download.";
+}
+
+function pauseDownloadSessionForReview(detail) {
+  window.clearInterval(progressTimer);
+  progressTimer = undefined;
+  cancellingTranscription = false;
+  cancelTranscriptionButton.hidden = true;
+  cancelTranscriptionButton.disabled = false;
+  downloadSession.hidden = false;
+  downloadSession.dataset.state = "complete";
+  updateDownloadProgress(90, detail || "Ready for subtitle review.");
+}
+
+function openSubtitleEditor(job) {
+  const review = job?.review;
+
+  if (!review || !Array.isArray(review.cues) || !review.mediaUrl || !review.token) {
+    throw new Error("The subtitle review session is incomplete or has expired.");
+  }
+
+  const isSameSession = currentSubtitleReview?.jobId === job.id;
+
+  if (!isSameSession) {
+    currentSubtitleReview = {
+      jobId: job.id,
+      statusUrl: `/api/downloads/${encodeURIComponent(job.id)}`,
+      token: review.token,
+      mediaUrl: review.mediaUrl,
+      language: review.language || "",
+      languageName: review.languageName || review.language || "Detected language",
+      duration: Number(review.duration) || null,
+      cues: review.cues.map((cue) => ({
+        id: String(cue.id),
+        startMs: Number(cue.startMs),
+        endMs: Number(cue.endMs),
+        text: typeof cue.text === "string" ? cue.text : ""
+      })),
+      style: normalizeSubtitleEditorStyle(review.style)
+    };
+  } else {
+    currentSubtitleReview.token = review.token;
+    currentSubtitleReview.mediaUrl = review.mediaUrl;
+  }
+
+  const session = currentSubtitleReview;
+  const languageLabel = getSubtitleLanguageLabel(session);
+  const durationLabel = session.duration ? formatDuration(session.duration) : "";
+
+  subtitleEditor.hidden = false;
+  previewPanel.hidden = true;
+  subtitleEditorMeta.textContent = [languageLabel, durationLabel].filter(Boolean).join(" | ");
+  subtitleCueCount.textContent = `${session.cues.length} cue${session.cues.length === 1 ? "" : "s"}`;
+  subtitleEditorVideo.src = apiUrl(session.mediaUrl);
+  subtitleEditorVideo.load();
+  renderSubtitleCueList();
+  setSubtitleEditorStyle(session.style);
+  setSubtitleEditorControlsDisabled(false);
+  setDownloadFormLocked(true);
+
+  if (subtitleEditorResizeObserver) {
+    subtitleEditorResizeObserver.disconnect();
+  }
+
+  if (typeof ResizeObserver === "function") {
+    subtitleEditorResizeObserver = new ResizeObserver(updateSubtitleStylePreview);
+    subtitleEditorResizeObserver.observe(subtitleVideoStage);
+  }
+
+  window.requestAnimationFrame(() => {
+    updateSubtitleStylePreview();
+    syncSubtitleCueToPlayback();
+    subtitleEditor.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+function closeSubtitleEditor() {
+  if (!currentSubtitleReview && subtitleEditor.hidden) {
+    return;
+  }
+
+  if (subtitleEditorResizeObserver) {
+    subtitleEditorResizeObserver.disconnect();
+    subtitleEditorResizeObserver = null;
+  }
+
+  subtitleEditorVideo.pause();
+  subtitleEditorVideo.removeAttribute("src");
+  subtitleEditorVideo.load();
+  subtitleOverlay.textContent = "";
+  subtitleCueList.replaceChildren();
+  subtitleCueRows = new Map();
+  activeSubtitleCueId = "";
+  currentSubtitleReview = null;
+  subtitleEditor.hidden = true;
+  previewPanel.hidden = false;
+  setDownloadFormLocked(false);
+}
+
+function renderSubtitleCueList() {
+  const fragment = document.createDocumentFragment();
+
+  subtitleCueRows = new Map();
+  subtitleCueList.replaceChildren();
+
+  for (const cue of currentSubtitleReview.cues) {
+    const row = document.createElement("div");
+    const seekButton = document.createElement("button");
+    const textarea = document.createElement("textarea");
+
+    row.className = "subtitle-cue-row";
+    row.dataset.cueId = cue.id;
+    seekButton.type = "button";
+    seekButton.className = "subtitle-cue-time";
+    seekButton.textContent = formatCueTime(cue.startMs);
+    seekButton.title = "Jump to this subtitle";
+    seekButton.addEventListener("click", () => seekToSubtitleCue(cue));
+
+    textarea.value = cue.text;
+    textarea.dir = "auto";
+    textarea.maxLength = 4000;
+    textarea.rows = Math.max(2, Math.min(5, cue.text.split("\n").length + 1));
+    textarea.setAttribute("aria-label", `Subtitle at ${formatCueTime(cue.startMs)}`);
+    textarea.addEventListener("focus", () => {
+      seekToSubtitleCue(cue);
+      setActiveSubtitleCue(cue.id);
+    });
+    textarea.addEventListener("input", () => {
+      cue.text = textarea.value;
+
+      if (activeSubtitleCueId === cue.id) {
+        subtitleOverlay.textContent = cue.text;
+      }
+    });
+
+    row.append(seekButton, textarea);
+    fragment.append(row);
+    subtitleCueRows.set(cue.id, { row, textarea });
+  }
+
+  subtitleCueList.append(fragment);
+}
+
+function seekToSubtitleCue(cue) {
+  if (!Number.isFinite(cue.startMs) || !Number.isFinite(subtitleEditorVideo.duration)) {
+    return;
+  }
+
+  subtitleEditorVideo.currentTime = Math.max(0, cue.startMs / 1000);
+  syncSubtitleCueToPlayback();
+}
+
+function syncSubtitleCueToPlayback() {
+  if (!currentSubtitleReview) {
+    return;
+  }
+
+  const currentMs = Math.round((Number(subtitleEditorVideo.currentTime) || 0) * 1000);
+  const activeCue = currentSubtitleReview.cues.find(
+    (cue) => currentMs >= cue.startMs && currentMs < cue.endMs
+  );
+
+  setActiveSubtitleCue(activeCue?.id || "");
+  subtitleOverlay.textContent = activeCue?.text || "";
+}
+
+function setActiveSubtitleCue(cueId) {
+  if (activeSubtitleCueId === cueId) {
+    return;
+  }
+
+  const previous = subtitleCueRows.get(activeSubtitleCueId);
+  const next = subtitleCueRows.get(cueId);
+
+  previous?.row.classList.remove("is-active");
+  previous?.row.removeAttribute("aria-current");
+  next?.row.classList.add("is-active");
+  next?.row.setAttribute("aria-current", "true");
+  activeSubtitleCueId = cueId;
+
+  if (next && !subtitleCueList.contains(document.activeElement)) {
+    next.row.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function setSubtitleEditorStyle(style) {
+  const normalized = normalizeSubtitleEditorStyle(style);
+  const positionInput = subtitlePositionInputs.find(
+    (input) => input.value === normalized.position
+  );
+
+  if (positionInput) {
+    positionInput.checked = true;
+  }
+  subtitleFontSizeInput.value = normalized.fontSize.toString();
+  subtitleColorInput.value = normalized.color.toLowerCase();
+  currentSubtitleReview.style = normalized;
+  updateSubtitleStylePreview();
+}
+
+function updateSubtitleStylePreview() {
+  const selectedPosition = subtitlePositionInputs.find((input) => input.checked)?.value;
+  const style = normalizeSubtitleEditorStyle({
+    position: selectedPosition,
+    fontSize: subtitleFontSizeInput.value,
+    color: subtitleColorInput.value
+  });
+  const stageHeight = subtitleVideoStage.clientHeight || 384;
+  const previewFontSize = Math.max(10, style.fontSize * (stageHeight / 384));
+
+  subtitleVideoStage.dataset.position = style.position;
+  subtitleVideoStage.style.setProperty("--preview-subtitle-size", `${previewFontSize}px`);
+  subtitleVideoStage.style.setProperty("--preview-subtitle-color", style.color);
+  subtitleFontSizeOutput.value = style.fontSize.toString();
+  subtitleFontSizeOutput.textContent = style.fontSize.toString();
+  subtitleColorOutput.value = style.color;
+  subtitleColorOutput.textContent = style.color;
+
+  if (currentSubtitleReview) {
+    currentSubtitleReview.style = style;
+  }
+}
+
+function normalizeSubtitleEditorStyle(style = {}) {
+  const validPositions = new Set([
+    "top-left",
+    "top-center",
+    "top-right",
+    "middle-left",
+    "middle-center",
+    "middle-right",
+    "bottom-left",
+    "bottom-center",
+    "bottom-right"
+  ]);
+  const position = validPositions.has(style.position) ? style.position : "bottom-center";
+  const requestedSize = Number(style.fontSize);
+  const fontSize = Number.isFinite(requestedSize)
+    ? Math.max(12, Math.min(72, Math.round(requestedSize)))
+    : 18;
+  const color = /^#[0-9a-f]{6}$/i.test(style.color || "")
+    ? style.color.toUpperCase()
+    : "#FFFFFF";
+
+  return { position, fontSize, color };
+}
+
+function setSubtitleEditorControlsDisabled(disabled) {
+  subtitlePositionInputs.forEach((input) => {
+    input.disabled = disabled;
+  });
+  subtitleFontSizeInput.disabled = disabled;
+  subtitleColorInput.disabled = disabled;
+  generateCaptionedVideoButton.disabled = disabled;
+  subtitleCueRows.forEach(({ textarea }) => {
+    textarea.disabled = disabled;
+  });
+}
+
+async function finalizeSubtitleReviewSession() {
+  if (!currentSubtitleReview || generateCaptionedVideoButton.disabled) {
+    return;
+  }
+
+  const session = currentSubtitleReview;
+
+  clearDiagnosticLog();
+  setSubtitleEditorControlsDisabled(true);
+  downloadSession.hidden = false;
+  downloadSession.dataset.state = "working";
+  currentDownloadJobId = session.jobId;
+  updateDownloadProgress(91, "Generating the final video with your subtitle corrections.");
+  setState(
+    "loading",
+    "Generating video",
+    "Embedding the corrected subtitles with the selected position, size, and color."
+  );
+
+  try {
+    const response = await fetchWithClassroomAccess(
+      apiUrl(`/api/downloads/${encodeURIComponent(session.jobId)}/finalize`),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          token: session.token,
+          cueEdits: session.cues.map((cue) => ({ id: cue.id, text: cue.text })),
+          style: session.style
+        })
+      }
+    );
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw createPayloadError(payload, "The corrected subtitles could not be rendered.");
+    }
+
+    await waitForDownloadJob({
+      ...payload,
+      jobId: payload.id || session.jobId,
+      statusUrl: session.statusUrl
+    });
+  } catch (error) {
+    pauseDownloadSessionForReview("Rendering stopped. Your edits are still available.");
+    showDiagnosticLog(error);
+    setState("error", "Could not generate video", error.message);
+  } finally {
+    if (currentSubtitleReview?.jobId === session.jobId) {
+      setSubtitleEditorControlsDisabled(false);
+    }
+  }
+}
+
+function formatCueTime(milliseconds) {
+  const totalMilliseconds = Math.max(0, Math.round(Number(milliseconds) || 0));
+  const hours = Math.floor(totalMilliseconds / 3600000);
+  const minutes = Math.floor((totalMilliseconds % 3600000) / 60000);
+  const seconds = Math.floor((totalMilliseconds % 60000) / 1000);
+  const millis = totalMilliseconds % 1000;
+  const clock = hours
+    ? `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+    : `${minutes}:${seconds.toString().padStart(2, "0")}`;
+
+  return `${clock}.${millis.toString().padStart(3, "0")}`;
+}
+
+function getSubtitleLanguageLabel(session) {
+  const code = session.language || "";
+  const suppliedName = session.languageName || "";
+
+  if (suppliedName && suppliedName.toLowerCase() !== code.toLowerCase()) {
+    return suppliedName;
+  }
+
+  try {
+    return new Intl.DisplayNames([navigator.language || "en"], {
+      type: "language"
+    }).of(code) || suppliedName || code || "Detected language";
+  } catch {
+    return suppliedName || code || "Detected language";
+  }
 }
 
 function schedulePreview() {
@@ -675,8 +1078,16 @@ async function waitForDownloadJob(payload) {
   currentDownloadJobId = payload.jobId;
   cancellingTranscription = false;
   cancelTranscriptionButton.hidden = true;
-  setState("loading", "Queued", payload.message || "The download is waiting to start.");
-  updateDownloadProgress(payload.progressPercent || 8, payload.message || "Waiting for the next download slot.");
+  const initialTitle =
+    payload.status === "working" ? getProgressStageTitle(payload.progressStage) : "Queued";
+  const initialMessage =
+    payload.message ||
+    (payload.status === "working"
+      ? "The video is being processed."
+      : "The download is waiting to start.");
+
+  setState("loading", initialTitle, initialMessage);
+  updateDownloadProgress(payload.progressPercent || 8, initialMessage);
 
   while (true) {
     await delay(1000);
@@ -715,6 +1126,7 @@ async function waitForDownloadJob(payload) {
     }
 
     if (job.status === "complete") {
+      closeSubtitleEditor();
       finishDownloadSession("Download ready.");
       const completedPayload = {
         fileName: job.fileName,
@@ -733,6 +1145,24 @@ async function waitForDownloadJob(payload) {
         showDownloadSaved(completedPayload);
       } else {
         startAutomaticDownload(completedPayload);
+      }
+      return;
+    }
+
+    if (job.status === "review" && job.review) {
+      pauseDownloadSessionForReview(job.message || "Review the subtitles before rendering.");
+      openSubtitleEditor(job);
+
+      if (job.error) {
+        const error = createPayloadError(job, job.error);
+        showDiagnosticLog(error);
+        setState("error", "Could not generate video", job.error);
+      } else {
+        setState(
+          "success",
+          "Review subtitles",
+          "Play the video, correct any text, choose the subtitle style, then generate the final video."
+        );
       }
       return;
     }
@@ -843,6 +1273,10 @@ function getProgressStageTitle(stage) {
 
   if (stage === "rendering-transcription") {
     return "Adding captions";
+  }
+
+  if (stage === "rendering-subtitles") {
+    return "Generating video";
   }
 
   if (stage === "finalizing") {

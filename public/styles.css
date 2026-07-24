@@ -201,6 +201,16 @@ label {
   display: none;
 }
 
+.subtitle-review-option {
+  padding-top: 12px;
+  border-top: 1px solid rgba(217, 211, 202, 0.72);
+  margin-top: 12px;
+}
+
+.subtitle-review-option[hidden] {
+  display: none;
+}
+
 .whisper-estimate {
   flex: 1 1 320px;
   margin: 0;
@@ -533,6 +543,10 @@ select:disabled {
   background: #fffdf9;
 }
 
+.preview-panel[hidden] {
+  display: none;
+}
+
 .preview-copy {
   display: grid;
   align-content: center;
@@ -608,6 +622,376 @@ select:disabled {
 
 .preview-panel[data-state="error"] .preview-label {
   color: var(--danger);
+}
+
+.subtitle-editor {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffdf9;
+}
+
+.subtitle-editor[hidden] {
+  display: none;
+}
+
+.subtitle-editor-header,
+.subtitle-cue-heading,
+.subtitle-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-label,
+.subtitle-editor-meta,
+.subtitle-editor h2 {
+  margin: 0;
+}
+
+.editor-label {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.subtitle-editor h2 {
+  margin-top: 3px;
+  font-size: 1.25rem;
+  line-height: 1.25;
+}
+
+.subtitle-editor-meta {
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+.subtitle-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.subtitle-video-column,
+.subtitle-cue-column {
+  min-width: 0;
+}
+
+.subtitle-video-column {
+  display: grid;
+  gap: 14px;
+}
+
+.subtitle-video-stage {
+  --preview-subtitle-size: 18px;
+  --preview-subtitle-color: #ffffff;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #111;
+}
+
+.subtitle-video-stage video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #111;
+}
+
+.subtitle-overlay {
+  position: absolute;
+  z-index: 2;
+  max-width: 88%;
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--preview-subtitle-color);
+  font-size: var(--preview-subtitle-size);
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  pointer-events: none;
+  text-shadow:
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000,
+    0 2px 3px rgba(0, 0, 0, 0.92);
+}
+
+.subtitle-overlay:empty {
+  display: none;
+}
+
+.subtitle-video-stage[data-position="top-left"] .subtitle-overlay {
+  top: 5%;
+  left: 5%;
+  text-align: left;
+}
+
+.subtitle-video-stage[data-position="top-center"] .subtitle-overlay {
+  top: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.subtitle-video-stage[data-position="top-right"] .subtitle-overlay {
+  top: 5%;
+  right: 5%;
+  text-align: right;
+}
+
+.subtitle-video-stage[data-position="middle-left"] .subtitle-overlay {
+  top: 50%;
+  left: 5%;
+  transform: translateY(-50%);
+  text-align: left;
+}
+
+.subtitle-video-stage[data-position="middle-center"] .subtitle-overlay {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.subtitle-video-stage[data-position="middle-right"] .subtitle-overlay {
+  top: 50%;
+  right: 5%;
+  transform: translateY(-50%);
+  text-align: right;
+}
+
+.subtitle-video-stage[data-position="bottom-left"] .subtitle-overlay {
+  bottom: 5%;
+  left: 5%;
+  text-align: left;
+}
+
+.subtitle-video-stage[data-position="bottom-center"] .subtitle-overlay {
+  bottom: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+.subtitle-video-stage[data-position="bottom-right"] .subtitle-overlay {
+  right: 5%;
+  bottom: 5%;
+  text-align: right;
+}
+
+.subtitle-style-controls {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.position-control {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.position-control legend,
+.subtitle-size-control > span,
+.subtitle-color-control > span {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.position-grid {
+  width: 84px;
+  height: 58px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f3eee6;
+}
+
+.position-grid label {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.position-grid input {
+  position: absolute;
+  width: 1px;
+  min-height: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+}
+
+.position-grid span {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #d9d3ca;
+}
+
+.position-grid input:checked + span {
+  border-color: var(--accent-strong);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2px #fffdf9;
+}
+
+.position-grid input:focus-visible + span {
+  outline: 3px solid rgba(184, 92, 33, 0.32);
+}
+
+.position-grid input:disabled + span {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.subtitle-size-control,
+.subtitle-color-control {
+  display: grid;
+  align-items: center;
+  gap: 0 8px;
+}
+
+.subtitle-size-control {
+  grid-template-columns: minmax(0, 1fr) 32px;
+}
+
+.subtitle-size-control > span,
+.subtitle-color-control > span {
+  grid-column: 1 / -1;
+}
+
+.subtitle-size-control input {
+  width: 100%;
+  min-height: 28px;
+  height: 28px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.subtitle-size-control output,
+.subtitle-color-control output {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.subtitle-color-control {
+  grid-template-columns: 44px auto;
+}
+
+.subtitle-color-control input {
+  width: 44px;
+  min-height: 36px;
+  height: 36px;
+  padding: 2px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.subtitle-cue-column {
+  display: grid;
+  gap: 8px;
+}
+
+.subtitle-cue-heading {
+  min-height: 28px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.subtitle-cue-list {
+  height: min(510px, 62vh);
+  min-height: 300px;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.subtitle-cue-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.subtitle-cue-row.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: #edf6f2;
+}
+
+.subtitle-cue-time {
+  min-height: 38px;
+  align-self: start;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  background: #f3eee6;
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.subtitle-cue-time:hover {
+  background: #e8f3ef;
+}
+
+.subtitle-cue-row textarea {
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  background: #fffdf9;
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.subtitle-cue-row textarea:focus {
+  border-color: var(--focus);
+  outline: 3px solid rgba(184, 92, 33, 0.2);
+}
+
+.subtitle-editor-actions {
+  justify-content: flex-end;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.subtitle-editor-actions button {
+  min-width: 220px;
 }
 
 .status-label {
@@ -694,5 +1078,37 @@ select:disabled {
 
   button {
     width: 100%;
+  }
+
+  .subtitle-editor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .subtitle-editor-meta {
+    text-align: left;
+  }
+
+  .subtitle-style-controls {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .subtitle-cue-row {
+    grid-template-columns: 1fr;
+  }
+
+  .subtitle-cue-time {
+    width: fit-content;
+  }
+}
+
+@media (max-width: 860px) {
+  .subtitle-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .subtitle-cue-list {
+    height: min(440px, 56vh);
   }
 }

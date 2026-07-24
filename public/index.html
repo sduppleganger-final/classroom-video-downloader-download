@@ -128,6 +128,18 @@
                 Load a preview to estimate local transcription time.
               </p>
             </div>
+
+            <div id="subtitle-review-option" class="subtitle-review-option" hidden>
+              <label class="checkbox-field" for="review-subtitles">
+                <input
+                  id="review-subtitles"
+                  name="reviewSubtitles"
+                  type="checkbox"
+                  checked
+                />
+                <span>Review and customize subtitles before generating the final video</span>
+              </label>
+            </div>
           </fieldset>
         </form>
 
@@ -141,6 +153,68 @@
           <div class="preview-frame">
             <video id="preview-video" muted playsinline preload="metadata" controls hidden></video>
             <p id="preview-message" class="preview-message">The first seconds will appear here.</p>
+          </div>
+        </section>
+
+        <section id="subtitle-editor" class="subtitle-editor" aria-labelledby="subtitle-editor-title" hidden>
+          <header class="subtitle-editor-header">
+            <div>
+              <p class="editor-label">Subtitle editor</p>
+              <h2 id="subtitle-editor-title">Review subtitles</h2>
+            </div>
+            <p id="subtitle-editor-meta" class="subtitle-editor-meta"></p>
+          </header>
+
+          <div class="subtitle-editor-layout">
+            <div class="subtitle-video-column">
+              <div id="subtitle-video-stage" class="subtitle-video-stage" data-position="bottom-center">
+                <video id="subtitle-editor-video" controls playsinline preload="metadata"></video>
+                <p id="subtitle-overlay" class="subtitle-overlay" dir="auto"></p>
+              </div>
+
+              <div class="subtitle-style-controls">
+                <fieldset class="position-control">
+                  <legend>Position</legend>
+                  <div class="position-grid" role="radiogroup" aria-label="Subtitle position">
+                    <label title="Top left"><input type="radio" name="subtitlePosition" value="top-left" aria-label="Top left" /><span></span></label>
+                    <label title="Top center"><input type="radio" name="subtitlePosition" value="top-center" aria-label="Top center" /><span></span></label>
+                    <label title="Top right"><input type="radio" name="subtitlePosition" value="top-right" aria-label="Top right" /><span></span></label>
+                    <label title="Middle left"><input type="radio" name="subtitlePosition" value="middle-left" aria-label="Middle left" /><span></span></label>
+                    <label title="Middle center"><input type="radio" name="subtitlePosition" value="middle-center" aria-label="Middle center" /><span></span></label>
+                    <label title="Middle right"><input type="radio" name="subtitlePosition" value="middle-right" aria-label="Middle right" /><span></span></label>
+                    <label title="Bottom left"><input type="radio" name="subtitlePosition" value="bottom-left" aria-label="Bottom left" /><span></span></label>
+                    <label title="Bottom center"><input type="radio" name="subtitlePosition" value="bottom-center" aria-label="Bottom center" checked /><span></span></label>
+                    <label title="Bottom right"><input type="radio" name="subtitlePosition" value="bottom-right" aria-label="Bottom right" /><span></span></label>
+                  </div>
+                </fieldset>
+
+                <label class="subtitle-size-control" for="subtitle-font-size">
+                  <span>Size</span>
+                  <input id="subtitle-font-size" type="range" min="12" max="72" step="1" value="18" />
+                  <output id="subtitle-font-size-output" for="subtitle-font-size">18</output>
+                </label>
+
+                <label class="subtitle-color-control" for="subtitle-color">
+                  <span>Color</span>
+                  <input id="subtitle-color" type="color" value="#ffffff" />
+                  <output id="subtitle-color-output" for="subtitle-color">#FFFFFF</output>
+                </label>
+              </div>
+            </div>
+
+            <div class="subtitle-cue-column">
+              <div class="subtitle-cue-heading">
+                <span>Timeline</span>
+                <span id="subtitle-cue-count"></span>
+              </div>
+              <div id="subtitle-cue-list" class="subtitle-cue-list"></div>
+            </div>
+          </div>
+
+          <div class="subtitle-editor-actions">
+            <button type="button" id="generate-captioned-video-button">
+              Generate final video
+            </button>
           </div>
         </section>
 

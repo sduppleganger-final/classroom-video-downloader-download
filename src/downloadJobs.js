@@ -2,6 +2,12 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { buildDiagnosticFileName } = require("./diagnostics");
+const {
+  applyCueEdits,
+  normalizeSubtitleReviewJobData,
+  normalizeSubtitleStyle,
+  serializeSubtitleReview
+} = require("./subtitleEditor");
 
 const defaultJobTtlMs = 60 * 60 * 1000;
 const defaultCleanupIntervalMs = 5 * 60 * 1000;
@@ -27,6 +33,10 @@ class DownloadJobManager {
     this.cleanupFiles = options.cleanupFiles !== false;
     this.finalizeResult =
       typeof options.finalizeResult === "function" ? options.finalizeResult : null;
+    this.finalizeSubtitleReview =
+      typeof options.finalizeSubtitleReview === "function"
+        ? options.finalizeSubtitleReview
+        : null;
     this.maxConcurrentJobs = normalizePositiveNumber(options.maxConcurrentJobs, 1);
     this.jobs = new Map();
     this.queue = [];
@@ -73,6 +83,7 @@ class DownloadJobManager {
       detectedLanguage: null,
       detectedLanguageName: null,
       estimatedSecondsRemaining: null,
+      reviewData: null,
       message: "Waiting for the next download slot."
     };
 
@@ -186,6 +197,78 @@ class DownloadJobManager {
     return filePath;
   }
 
+  getReviewMediaPath(jobId, downloadToken) {
+    const job = this.jobs.get(jobId);
+
+    if (
+      !job?.reviewData ||
+      !["review", "working"].includes(job.status) ||
+      !isValidDownloadToken(job, downloadToken)
+    ) {
+      return null;
+    }
+
+    const filePath = path.resolve(job.reviewData.mediaPath);
+
+    if (!isInsideDirectory(filePath, this.downloadsDir) || !isExistingFile(filePath)) {
+      return null;
+    }
+
+    return filePath;
+  }
+
+  finalizeReview(jobId, payload = {}) {
+    const job = this.jobs.get(jobId);
+
+    if (!job) {
+      return { ok: false, statusCode: 404, message: "Download job not found or expired." };
+    }
+
+    if (job.status !== "review" || !job.reviewData) {
+      return {
+        ok: false,
+        statusCode: 409,
+        message: "This download is not waiting for subtitle review."
+      };
+    }
+
+    if (!isValidDownloadToken(job, payload.token)) {
+      return { ok: false, statusCode: 403, message: "This subtitle review link is invalid or expired." };
+    }
+
+    if (!this.finalizeSubtitleReview) {
+      return { ok: false, statusCode: 500, message: "Subtitle rendering is unavailable." };
+    }
+
+    try {
+      job.reviewData = {
+        ...job.reviewData,
+        cues: applyCueEdits(job.reviewData.cues, payload.cueEdits),
+        style: normalizeSubtitleStyle(payload.style)
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        statusCode: 400,
+        message: error.userMessage || "The corrected subtitle settings are invalid."
+      };
+    }
+
+    this.updateJob(job, {
+      status: "working",
+      error: null,
+      diagnosticLog: null,
+      diagnosticFileName: null,
+      progressPercent: Math.max(job.progressPercent || 0, 91),
+      progressStage: "rendering-subtitles",
+      canCancel: false,
+      message: "Generating the final video with the corrected subtitles."
+    });
+    this.runReviewFinalization(job, payload);
+
+    return { ok: true, job: this.serializeJob(job) };
+  }
+
   cleanupExpiredJobs() {
     const now = this.now().getTime();
 
@@ -198,7 +281,15 @@ class DownloadJobManager {
         const fileNames = new Set([
           job.fileName,
           ...job.artifacts.map((artifact) => artifact.fileName),
-          ...job.cleanupFileNames
+          ...job.cleanupFileNames,
+          ...(job.reviewData
+            ? [
+                job.reviewData.mediaPath,
+                job.reviewData.subtitlePath,
+                job.reviewData.transcriptPath,
+                job.reviewData.outputPath
+              ].map((filePath) => path.basename(filePath))
+            : [])
         ]);
 
         for (const fileName of fileNames) {
@@ -269,6 +360,7 @@ class DownloadJobManager {
       const result = await this.downloadVideo(url, resolution, this.downloadsDir, {
         sourceSubtitle,
         transcription,
+        deferSubtitleReview: transcription.review === true,
         signal: abortController.signal,
         onProgress: (progress) => {
           this.updateProgress(job, progress);
@@ -280,6 +372,40 @@ class DownloadJobManager {
         result.cleanupFilePaths,
         this.downloadsDir
       );
+      const reviewData = result.review
+        ? normalizeSubtitleReviewJobData(result.review, this.downloadsDir)
+        : null;
+
+      if (result.review && !reviewData) {
+        throw Object.assign(
+          new Error("The subtitle review files could not be prepared safely."),
+          { userMessage: "The subtitle review files could not be prepared safely." }
+        );
+      }
+
+      if (reviewData) {
+        this.updateJob(job, {
+          status: "review",
+          reviewData,
+          fileName: null,
+          artifacts: [],
+          savedArtifacts: [],
+          cleanupFileNames,
+          actualResolutionLabel: result.actualResolutionLabel || null,
+          adjustmentMessage: result.adjustmentMessage || null,
+          detectedLanguage: result.detectedLanguage || reviewData.language || null,
+          detectedLanguageName:
+            result.detectedLanguageName || reviewData.languageName || null,
+          estimatedSecondsRemaining: null,
+          canCancel: false,
+          progressPercent: 90,
+          progressStage: "subtitle-review",
+          expiresAt,
+          message: "Review and correct the subtitles before generating the final video."
+        });
+        return;
+      }
+
       const finalized = this.finalizeResult
         ? await this.finalizeResult(result, artifacts)
         : {};
@@ -331,6 +457,61 @@ class DownloadJobManager {
       delete job.abortController;
       this.activeCount -= 1;
       this.pumpQueue();
+    }
+  }
+
+  async runReviewFinalization(job, payload) {
+    try {
+      const result = await this.finalizeSubtitleReview({
+        review: job.reviewData,
+        cueEdits: payload.cueEdits,
+        style: payload.style,
+        onProgress: (progress) => {
+          this.updateProgress(job, progress);
+        }
+      });
+      const expiresAt = new Date(this.now().getTime() + this.jobTtlMs).toISOString();
+      const artifacts = normalizeJobArtifacts(result.artifacts, this.downloadsDir);
+      const cleanupFileNames = normalizeCleanupFileNames(
+        result.cleanupFilePaths,
+        this.downloadsDir
+      );
+      const finalized = this.finalizeResult
+        ? await this.finalizeResult(result, artifacts)
+        : {};
+
+      this.updateJob(job, {
+        status: "complete",
+        fileName: result.fileName,
+        savedFileName: finalized.savedFileName || null,
+        savedPath: finalized.savedPath || null,
+        artifacts,
+        savedArtifacts: Array.isArray(finalized.artifacts) ? finalized.artifacts : [],
+        cleanupFileNames,
+        reviewData: null,
+        error: null,
+        diagnosticLog: null,
+        diagnosticFileName: null,
+        estimatedSecondsRemaining: null,
+        canCancel: false,
+        progressPercent: 100,
+        progressStage: "complete",
+        expiresAt,
+        message: `Ready to save. This download expires at ${expiresAt}.`
+      });
+    } catch (error) {
+      this.updateJob(job, {
+        status: "review",
+        error: error.userMessage || "The corrected subtitles could not be rendered.",
+        diagnosticLog: error.diagnosticLog || null,
+        diagnosticFileName: error.diagnosticLog
+          ? buildDiagnosticFileName(this.now())
+          : null,
+        canCancel: false,
+        progressPercent: 90,
+        progressStage: "subtitle-review",
+        message: "Rendering failed. Your subtitle review is still available to retry."
+      });
     }
   }
 
@@ -417,6 +598,14 @@ class DownloadJobManager {
       detectedLanguageName: job.detectedLanguageName,
       estimatedSecondsRemaining: job.estimatedSecondsRemaining,
       message: job.message,
+      review:
+        job.status === "review" && job.reviewData
+          ? serializeSubtitleReview(
+              job.reviewData,
+              `/api/downloads/${encodeURIComponent(job.id)}/review-media?token=${job.downloadToken}`,
+              job.downloadToken
+            )
+          : null,
       downloadUrl:
         isDownloadReadyStatus(job.status) && job.fileName
           ? `/api/downloads/${encodeURIComponent(job.id)}/file?token=${job.downloadToken}`

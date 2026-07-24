@@ -21,6 +21,7 @@ const {
   toSourceSubtitleSelection
 } = require("./src/transcriptionOptions");
 const { createWhisperArtifacts } = require("./src/whisperTranscription");
+const { finalizeSubtitleReview } = require("./src/subtitleEditor");
 const {
   getWhisperCommandParts,
   getWhisperStatus,
@@ -60,6 +61,7 @@ function createApp(options = {}) {
   );
   const runDownload = options.downloadVideo || downloadVideo;
   const whisperStatus = options.whisperStatus || getWhisperStatus();
+  const runSubtitleFinalizer = options.finalizeSubtitleReview || finalizeSubtitleReview;
   const downloadJobs =
     options.downloadJobs ||
     createDownloadJobManager({
@@ -78,6 +80,31 @@ function createApp(options = {}) {
                 finalDownloadsDir
               })
           : null,
+      finalizeSubtitleReview: async (payload) => {
+        try {
+          return await runSubtitleFinalizer({
+            ...payload,
+            ffmpegCommandParts: options.ffmpegCommandParts || {
+              command: getFfmpegCheckCommand(),
+              args: []
+            }
+          });
+        } catch (error) {
+          if (!error.diagnosticLog) {
+            error.diagnosticLog = createFailureDiagnostic({
+              operation: "subtitle review rendering",
+              userMessage:
+                error.userMessage || "The corrected subtitles could not be rendered.",
+              downloadsDir,
+              commandParts: error.commandParts,
+              error,
+              stderr: error.stderr
+            });
+          }
+
+          throw error;
+        }
+      },
       startCleanupTimer: options.startCleanupTimer
     });
 
@@ -87,7 +114,7 @@ function createApp(options = {}) {
 
   app.disable("x-powered-by");
   app.use(createCorsMiddleware(options.publicAppOrigin ?? process.env.PUBLIC_APP_ORIGIN));
-  app.use(express.json({ limit: "16kb" }));
+  app.use(express.json({ limit: "2mb" }));
   app.use((error, _request, response, next) => {
     if (error instanceof SyntaxError && "body" in error) {
       response.status(400).json({ error: "Request body must be valid JSON." });
@@ -120,6 +147,10 @@ function createApp(options = {}) {
 
   app.get("/api/downloads/:jobId/artifacts/:artifactId", (request, response) => {
     sendArtifactFile(request, response, downloadJobs);
+  });
+
+  app.get("/api/downloads/:jobId/review-media", (request, response) => {
+    sendReviewMediaFile(request, response, downloadJobs);
   });
 
   app.use("/api", accessControl.middleware);
@@ -215,7 +246,11 @@ function createApp(options = {}) {
 
     const sourceSubtitle = toSourceSubtitleSelection(transcription.value);
 
-    if (hostedMode || isWhisperTranscription(transcription.value)) {
+    if (
+      hostedMode ||
+      isWhisperTranscription(transcription.value) ||
+      transcription.value.review === true
+    ) {
       const job = downloadJobs.createJob({
         url: parsed.normalizedUrl,
         resolution,
@@ -326,6 +361,17 @@ function createApp(options = {}) {
     response.json(result.job);
   });
 
+  app.post("/api/downloads/:jobId/finalize", (request, response) => {
+    const result = downloadJobs.finalizeReview(request.params.jobId, request.body);
+
+    if (!result.ok) {
+      response.status(result.statusCode || 409).json({ error: result.message });
+      return;
+    }
+
+    response.status(202).json(result.job);
+  });
+
   app.get("/api/downloads/:jobId/file", (request, response) => {
     const job = downloadJobs.getJob(request.params.jobId);
 
@@ -419,6 +465,28 @@ function sendArtifactFile(request, response, downloadJobs) {
   }
 
   response.download(filePath, artifact.fileName);
+}
+
+function sendReviewMediaFile(request, response, downloadJobs) {
+  const job = downloadJobs.getJob(request.params.jobId);
+
+  if (!job) {
+    response.status(404).json({ error: "Download job not found or expired." });
+    return;
+  }
+
+  const filePath = downloadJobs.getReviewMediaPath(
+    request.params.jobId,
+    typeof request.query?.token === "string" ? request.query.token : ""
+  );
+
+  if (!filePath) {
+    response.status(403).json({ error: "This subtitle review link is invalid or expired." });
+    return;
+  }
+
+  response.setHeader("Content-Disposition", `inline; filename="${path.basename(filePath).replace(/"/g, "")}"`);
+  response.sendFile(filePath);
 }
 
 async function saveDirectDownloadToFinalDirectory({
@@ -998,6 +1066,7 @@ function downloadVideo(
               height: printedOutput.height,
               duration: printedOutput.duration,
               saveOriginal: transcription.saveOriginal !== false,
+              deferRender: options.deferSubtitleReview === true,
               signal,
               ffmpegCommandParts: options.ffmpegCommandParts || {
                 command: getFfmpegCheckCommand(),
@@ -1062,6 +1131,7 @@ function downloadVideo(
               height: printedOutput.height,
               duration: printedOutput.duration,
               startedAtMs,
+              deferRender: options.deferSubtitleReview === true,
               ffmpegCommandParts: options.ffmpegCommandParts || {
                 command: getFfmpegCheckCommand(),
                 args: []
