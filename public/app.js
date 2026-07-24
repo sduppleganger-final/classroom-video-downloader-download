@@ -304,7 +304,7 @@ function getTranscriptionRequest() {
     if (appConfig.whisperAvailable === false) {
       return {
         ok: false,
-        message: "The bundled Whisper runtime or Small model is not available in this app."
+        message: "The bundled Whisper runtime or Large v3 Turbo Q5_0 model is not available in this app."
       };
     }
 

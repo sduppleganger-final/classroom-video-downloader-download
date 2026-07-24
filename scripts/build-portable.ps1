@@ -19,7 +19,7 @@ if (-not (Test-Path -LiteralPath $builder)) {
   throw "electron-builder was not found. Run npm install first."
 }
 
-Write-Host "Preparing the bundled Whisper Small runtime, model, and voice activity detector..."
+Write-Host "Preparing the bundled Whisper Large v3 Turbo Q5_0 runtime, model, and voice activity detector..."
 & node (Join-Path $projectRoot "scripts\prepare-whisper.mjs") "--arch=x64"
 if ($LASTEXITCODE -ne 0) {
   throw "The bundled Whisper runtime, model, or voice activity detector could not be prepared."

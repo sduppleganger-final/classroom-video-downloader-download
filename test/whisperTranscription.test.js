@@ -15,7 +15,7 @@ const {
   prepareWhisperCommandParts
 } = require("../src/whisperTranscription");
 
-test("builds multilingual automatic Whisper Small CLI arguments", () => {
+test("builds multilingual automatic Whisper Large v3 Turbo Q5_0 CLI arguments", () => {
   const args = buildWhisperArgs({
     modelPath: "model.bin",
     vadModelPath: "vad-model.bin",

@@ -109,7 +109,7 @@ function createApp(options = {}) {
       downloadMode: hostedMode ? "job" : "direct",
       canOpenFileLocation,
       whisperAvailable: whisperStatus.available,
-      whisperModel: "Small multilingual",
+      whisperModel: "Large v3 Turbo Q5_0 multilingual",
       whisperModelSize: whisperStatus.modelSize || null
     });
   });
@@ -208,7 +208,7 @@ function createApp(options = {}) {
     if (isWhisperTranscription(transcription.value) && !whisperStatus.available) {
       response.status(500).json({
         error:
-          "The bundled Whisper Small runtime or model is missing. Reinstall the latest app version and try again."
+          "The bundled Whisper Large v3 Turbo Q5_0 runtime or model is missing. Reinstall the latest app version and try again."
       });
       return;
     }
@@ -699,7 +699,7 @@ function downloadVideo(
     ) {
       const whisperCommandParts = options.whisperCommandParts || getWhisperCommandParts();
       const userMessage =
-        "The bundled Whisper Small runtime or model is missing. Reinstall the latest app version and try again.";
+        "The bundled Whisper Large v3 Turbo Q5_0 runtime or model is missing. Reinstall the latest app version and try again.";
 
       reject({
         statusCode: 500,
@@ -1044,7 +1044,7 @@ function downloadVideo(
                 startedAtMs,
                 extra: addStartupFailuresToExtra(startupFailures, {
                   downloadedMediaPath: resolvedPath,
-                  whisperModel: "Small multilingual"
+                  whisperModel: "Large v3 Turbo Q5_0 multilingual"
                 })
               })
             });

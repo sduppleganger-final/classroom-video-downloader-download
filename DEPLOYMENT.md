@@ -5,7 +5,7 @@ This project can now run in two shapes:
 - Local desktop mode: Electron opens the app on your computer and saves files locally.
 - Hosted web mode: a Node server runs `yt-dlp`, creates background download jobs, and serves temporary result files to browser users.
 
-Codex Sites can host compatible frontends, but this downloader needs a Node backend because it runs native media tools. The simplest online deployment is Docker on a service such as Render, Railway, Fly.io, Azure Container Apps, or a VPS. Desktop releases bundle `yt-dlp`, `ffmpeg`, `whisper.cpp`, the multilingual Whisper Small model, and Silero voice activity detection, so recipients do not need to install Python, codecs, yt-dlp, ffmpeg, Whisper, or transcription models separately. The Docker image installs system `ffmpeg`; hosted Whisper additionally requires a native `whisper.cpp` runtime and both models to be provisioned on the server.
+Codex Sites can host compatible frontends, but this downloader needs a Node backend because it runs native media tools. The simplest online deployment is Docker on a service such as Render, Railway, Fly.io, Azure Container Apps, or a VPS. Desktop releases bundle `yt-dlp`, `ffmpeg`, `whisper.cpp`, the multilingual Whisper Large v3 Turbo Q5_0 model, and Silero voice activity detection, so recipients do not need to install Python, codecs, yt-dlp, ffmpeg, Whisper, or transcription models separately. The Docker image installs system `ffmpeg`; hosted Whisper additionally requires a native `whisper.cpp` runtime and both models to be provisioned on the server.
 
 ## Portable Windows App
 
@@ -17,7 +17,7 @@ npm run build:portable
 
 Send the generated `.exe` from the `dist` folder. Do not send only the desktop shortcut; the shortcut points back to this local project folder.
 
-The build verifies and embeds the pinned multilingual Whisper Small model. Expect the
+The build verifies and embeds the pinned multilingual Whisper Large v3 Turbo Q5_0 model. Expect the
 portable file to be much larger than releases without local transcription because the
 model alone is about 466 MiB.
 
@@ -42,7 +42,7 @@ npm run build:mac -- --arch=x64
 The generated `.zip` files are written to `dist-mac`. The app is unsigned, so macOS Gatekeeper may require users to right-click the app, choose Open, and confirm the first launch. The GitHub Actions workflow `.github/workflows/build-mac.yml` builds both Mac variants on native GitHub-hosted macOS runners and uploads them to the release tag matching the version in `package.json`.
 
 Both Mac jobs compile the pinned `whisper.cpp` CLI for their native architecture and
-embed the same checksum-verified multilingual Small model used by Windows.
+embed the same checksum-verified multilingual Large v3 Turbo Q5_0 model used by Windows.
 
 ## Docker Quick Start
 

@@ -21,9 +21,9 @@ export const WHISPER_WINDOWS_ARCHIVE_SHA256 =
   "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539";
 export const WHISPER_MAC_SOURCE_SHA256 =
   "147267177eef7b22ec3d2476dd514d1b12e160e176230b740e3d1bd600118447";
-export const WHISPER_SMALL_MODEL_SHA256 =
-  "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b";
-export const WHISPER_SMALL_MODEL_SIZE = 487601967;
+export const WHISPER_LARGE_V3_TURBO_Q5_MODEL_SHA256 =
+  "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2";
+export const WHISPER_LARGE_V3_TURBO_Q5_MODEL_SIZE = 574041195;
 export const WHISPER_VAD_MODEL_SHA256 =
   "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987";
 export const WHISPER_VAD_MODEL_SIZE = 885098;
@@ -31,8 +31,8 @@ export const WHISPER_WINDOWS_ARCHIVE_URL =
   `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP_VERSION}/whisper-bin-x64.zip`;
 export const WHISPER_MAC_SOURCE_URL =
   `https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_VERSION}.tar.gz`;
-export const WHISPER_SMALL_MODEL_URL =
-  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true";
+export const WHISPER_LARGE_V3_TURBO_Q5_MODEL_URL =
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin?download=true";
 export const WHISPER_VAD_MODEL_URL =
   "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin?download=true";
 
@@ -45,9 +45,9 @@ export async function prepareWhisper({
   arch = process.arch,
   fetchImpl = globalThis.fetch,
   logger = console,
-  modelUrl = WHISPER_SMALL_MODEL_URL,
-  modelSha256 = WHISPER_SMALL_MODEL_SHA256,
-  modelSize = WHISPER_SMALL_MODEL_SIZE,
+  modelUrl = WHISPER_LARGE_V3_TURBO_Q5_MODEL_URL,
+  modelSha256 = WHISPER_LARGE_V3_TURBO_Q5_MODEL_SHA256,
+  modelSize = WHISPER_LARGE_V3_TURBO_Q5_MODEL_SIZE,
   vadModelUrl = WHISPER_VAD_MODEL_URL,
   vadModelSha256 = WHISPER_VAD_MODEL_SHA256,
   vadModelSize = WHISPER_VAD_MODEL_SIZE,
@@ -70,7 +70,11 @@ export async function prepareWhisper({
   }
 
   const whisperRoot = path.join(projectRoot, "vendor", "whisper");
-  const modelPath = path.join(whisperRoot, "models", "ggml-small.bin");
+  const modelPath = path.join(
+    whisperRoot,
+    "models",
+    "ggml-large-v3-turbo-q5_0.bin"
+  );
   const vadModelPath = path.join(
     whisperRoot,
     "models",
@@ -85,7 +89,7 @@ export async function prepareWhisper({
     expectedSize: modelSize,
     fetchImpl,
     logger,
-    label: "Whisper Small multilingual model"
+    label: "Whisper Large v3 Turbo Q5_0 multilingual model"
   });
   await ensureVerifiedFile({
     targetPath: vadModelPath,

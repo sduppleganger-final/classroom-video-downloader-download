@@ -19,7 +19,7 @@ test("prepareWhisper installs a verified model and delegated native runtime", as
     projectRoot,
     platform: "win32",
     arch: "x64",
-    modelUrl: "https://example.test/ggml-small.bin",
+    modelUrl: "https://example.test/ggml-large-v3-turbo-q5_0.bin",
     modelSha256,
     modelSize: model.length,
     vadModelUrl: "https://example.test/ggml-silero.bin",

@@ -8,10 +8,11 @@ Copyright (c) 2023-2026 The ggml authors.
 
 Licensed under the MIT License. Source: https://github.com/ggml-org/whisper.cpp
 
-## Whisper Small model
+## Whisper Large v3 Turbo Q5_0 model
 
-The multilingual Whisper Small model is derived from OpenAI Whisper and is used
-locally by whisper.cpp. OpenAI Whisper is licensed under the MIT License.
+The quantized multilingual Whisper Large v3 Turbo model is derived from OpenAI
+Whisper and is used locally by whisper.cpp. OpenAI Whisper is licensed under the
+MIT License.
 Source: https://github.com/openai/whisper
 
 ## Silero VAD model

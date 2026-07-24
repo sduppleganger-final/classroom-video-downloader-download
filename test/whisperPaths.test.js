@@ -22,7 +22,7 @@ test("resolves development and packaged Whisper paths", () => {
         "vendor",
         "whisper",
         "models",
-        "ggml-small.bin"
+        "ggml-large-v3-turbo-q5_0.bin"
       ),
       vadModelPath: path.join(
         "C:\\project",
@@ -55,7 +55,7 @@ test("resolves development and packaged Whisper paths", () => {
         "vendor",
         "whisper",
         "models",
-        "ggml-small.bin"
+        "ggml-large-v3-turbo-q5_0.bin"
       ),
       vadModelPath: path.join(
         "C:\\project",
@@ -76,7 +76,7 @@ test("resolves development and packaged Whisper paths", () => {
 test("reports Whisper available only when runtime launches and model is large enough", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cvd-whisper-paths-"));
   const command = path.join(directory, "whisper-cli.exe");
-  const modelPath = path.join(directory, "ggml-small.bin");
+  const modelPath = path.join(directory, "ggml-large-v3-turbo-q5_0.bin");
   const vadModelPath = path.join(directory, "ggml-silero-v6.2.0.bin");
   fs.writeFileSync(command, "runtime");
   fs.writeFileSync(modelPath, "model");

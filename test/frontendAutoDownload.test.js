@@ -126,7 +126,7 @@ test("frontend offers local Whisper with estimates, original-video retention, an
 
   assert.match(indexHtml, /id="transcription-none"/);
   assert.match(indexHtml, /id="transcription-whisper"/);
-  assert.match(indexHtml, /bundled Small AI model locally/);
+  assert.match(indexHtml, /bundled Large v3 Turbo Q5_0 AI model locally/);
   assert.match(indexHtml, /id="save-original-video"[\s\S]*type="checkbox"[\s\S]*checked/);
   assert.match(indexHtml, /id="whisper-estimate"/);
   assert.match(indexHtml, /id="cancel-transcription-button"/);

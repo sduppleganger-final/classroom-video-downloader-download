@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const minimumModelBytes = 400 * 1024 * 1024;
+const minimumModelBytes = 570 * 1000 * 1000;
 const minimumVadModelBytes = 800 * 1024;
 
 function getWhisperPaths(options = {}) {
@@ -29,7 +29,7 @@ function getWhisperPaths(options = {}) {
     command: process.env.WHISPER_CLI_PATH || defaultCommand,
     modelPath:
       process.env.WHISPER_MODEL_PATH ||
-      path.join(whisperRoot, "models", "ggml-small.bin"),
+      path.join(whisperRoot, "models", "ggml-large-v3-turbo-q5_0.bin"),
     vadModelPath:
       process.env.WHISPER_VAD_MODEL_PATH ||
       path.join(whisperRoot, "models", "ggml-silero-v6.2.0.bin")
@@ -44,7 +44,7 @@ function getWhisperCommandParts(options = {}) {
     args: [],
     modelPath: paths.modelPath,
     vadModelPath: paths.vadModelPath,
-    label: "bundled whisper.cpp Small runtime"
+    label: "bundled whisper.cpp Large v3 Turbo Q5_0 runtime"
   };
 }
 
